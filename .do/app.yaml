@@ -1,0 +1,77 @@
+name: monday-donations-integration
+region: fra  # Frankfurt — closest to Israel
+
+services:
+  - name: api
+    environment_slug: node-js
+    github:
+      repo: your-username/monday-donations-integration  # TODO: update with your repo
+      branch: main
+      deploy_on_push: true
+    build_command: npm ci && npm run build
+    run_command: npm start
+    http_port: 3000
+    instance_size_slug: basic-xxs  # ~$5/month — upgrade if needed
+    instance_count: 1
+    health_check:
+      http_path: /api/health
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: MONDAY_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: MONDAY_MASTER_BOARD_ID
+        scope: RUN_TIME
+      - key: MONDAY_COL_EMAIL
+        scope: RUN_TIME
+      - key: MONDAY_COL_FIRST_DATE
+        scope: RUN_TIME
+      - key: MONDAY_COL_LAST_DATE
+        scope: RUN_TIME
+      - key: MONDAY_COL_AMOUNT
+        scope: RUN_TIME
+      - key: MONDAY_COL_CURRENCY
+        scope: RUN_TIME
+      - key: MONDAY_COL_PLATFORM
+        scope: RUN_TIME
+      - key: MONDAY_COL_STATUS
+        scope: RUN_TIME
+      - key: HYP_WEBHOOK_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      - key: CRON_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      - key: PORT
+        value: "3000"
+        scope: RUN_TIME
+
+jobs:
+  - name: verify-status
+    environment_slug: node-js
+    github:
+      repo: your-username/monday-donations-integration  # TODO: update with your repo
+      branch: main
+    build_command: npm ci && npm run build
+    run_command: npm run job:verify-status
+    instance_size_slug: basic-xxs
+    # Runs at 08:00 Israel time (06:00 UTC in winter, 05:00 UTC in summer)
+    # TODO: Adjust for DST or use a fixed UTC offset
+    schedule: "0 6 * * *"
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: MONDAY_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: MONDAY_MASTER_BOARD_ID
+        scope: RUN_TIME
+      - key: MONDAY_COL_STATUS
+        scope: RUN_TIME
+      - key: MONDAY_COL_LAST_DATE
+        scope: RUN_TIME
+      - key: MONDAY_COL_FIRST_DATE
+        scope: RUN_TIME
