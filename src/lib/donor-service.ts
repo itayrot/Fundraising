@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { db } from './db';
 import { donorMap } from '../db/schema';
-import { createDonorItem, updateDonorItem } from './monday';
+import { createDonorItem, createOneTimeDonationItem, updateDonorItem } from './monday';
 import type { NormalizedTransaction } from '../types';
 
 function todayString(): string {
@@ -10,6 +10,23 @@ function todayString(): string {
 
 export async function upsertDonor(tx: NormalizedTransaction): Promise<void> {
   const today = todayString();
+
+  // One-time donations go to a separate board, no donor record tracking
+  if (!tx.isRecurring) {
+    await createOneTimeDonationItem({
+      email: tx.email,
+      name: tx.name,
+      amount: tx.amount,
+      currency: tx.currency,
+      platform: tx.platform,
+      firstDonationDate: today,
+      lastDonationDate: today,
+      isRecurring: false,
+      agreementId: null,
+    });
+    console.log(`[donor-service] Created one-time donation for ${tx.email}`);
+    return;
+  }
 
   const [existing] = await db
     .select()
@@ -36,6 +53,8 @@ async function createNewDonor(
     platform: tx.platform,
     firstDonationDate: today,
     lastDonationDate: today,
+    isRecurring: tx.isRecurring,
+    agreementId: tx.agreementId,
   });
 
   await db.insert(donorMap).values({
@@ -47,10 +66,12 @@ async function createNewDonor(
     amount: tx.amount,
     currency: tx.currency,
     platform: tx.platform,
+    isRecurring: tx.isRecurring,
+    agreementId: tx.agreementId,
     status: 'active',
   });
 
-  console.log(`[donor-service] Created new donor: ${tx.email} (Monday item ${mondayItemId})`);
+  console.log(`[donor-service] Created new donor: ${tx.email} (Monday item ${mondayItemId}, recurring=${tx.isRecurring})`);
 }
 
 async function updateExistingDonor(

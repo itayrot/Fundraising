@@ -11,6 +11,8 @@ export interface NormalizedTransaction {
   currency: Currency;
   platform: Platform;
   status: TransactionStatus;
+  isRecurring: boolean;
+  agreementId: string | null;
   transactionDate: Date;
   rawPayload: unknown;
 }
@@ -23,6 +25,8 @@ export interface CreateDonorInput {
   platform: Platform;
   firstDonationDate: string;
   lastDonationDate: string;
+  isRecurring: boolean;
+  agreementId: string | null;
 }
 
 export interface UpdateDonorInput {

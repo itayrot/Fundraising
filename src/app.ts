@@ -5,11 +5,8 @@ import healthRouter from './routes/health';
 
 const app = express();
 
-// Webhook routes receive the raw Buffer body (needed for signature validation)
-app.use('/api/webhook', express.raw({ type: 'application/json' }));
-
-// All other routes use parsed JSON
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 app.use('/api/webhook', webhookRouter);
 app.use('/api/verify-status', verifyStatusRouter);

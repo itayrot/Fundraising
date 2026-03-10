@@ -7,6 +7,7 @@ import {
   date,
   jsonb,
   bigint,
+  boolean,
 } from 'drizzle-orm/pg-core';
 
 export const transactions = pgTable('transactions', {
@@ -19,6 +20,8 @@ export const transactions = pgTable('transactions', {
   platform: varchar('platform', { length: 20 }).notNull().default('hyp'),
   // 'succeeded' | 'failed' | 'refunded'
   status: varchar('status', { length: 20 }).notNull(),
+  isRecurring: boolean('is_recurring').notNull().default(false),
+  agreementId: varchar('agreement_id', { length: 100 }),
   transactionDate: timestamp('transaction_date').notNull(),
   rawPayload: jsonb('raw_payload'),
   mondayTxItemId: bigint('monday_tx_item_id', { mode: 'number' }),
@@ -35,6 +38,8 @@ export const donorMap = pgTable('donor_map', {
   amount: numeric('amount', { precision: 10, scale: 2 }).notNull(),
   currency: varchar('currency', { length: 3 }).notNull(),
   platform: varchar('platform', { length: 20 }).notNull(),
+  isRecurring: boolean('is_recurring').notNull().default(false),
+  agreementId: varchar('agreement_id', { length: 100 }),
   // 'active' | 'pending' | 'inactive'
   status: varchar('status', { length: 20 }).notNull().default('active'),
   createdAt: timestamp('created_at').defaultNow().notNull(),

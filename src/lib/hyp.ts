@@ -1,97 +1,113 @@
-import crypto from 'crypto';
 import type { NormalizedTransaction, TransactionStatus, Currency } from '../types';
 
-// TODO: Confirm the exact signature header name with Hyp documentation
-const HYP_SIGNATURE_HEADER = 'x-hyp-signature';
-
 /**
- * Validates the HMAC-SHA256 signature sent by Hyp on each webhook request.
- * The raw request body (Buffer) must be used — parsed JSON won't match.
+ * Hyp sends webhooks as HTTP GET requests with all data as query parameters.
  *
- * TODO: Confirm with Hyp:
- *   1. Exact header name
- *   2. Signature format (hex? base64? prefixed with "sha256="?)
+ * Field mapping (confirmed):
+ *   Fild1 = full name of the donor
+ *   Fild2 = email of the donor
+ *   UserId = national ID (teudat zehut) - not used as identifier
+ *   Id = transaction ID (unique per charge)
+ *   CCode = 0 means success, anything else is failure
+ *   Amount = amount charged
+ *   Coin = currency: 1=ILS, 2=USD, 3=EUR, 4=GBP
+ *   Info = "הוראת קבע - 513093" for recurring, other text for one-time
  */
-export function validateHypSignature(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): boolean {
-  const secret = process.env.HYP_WEBHOOK_SECRET;
-  if (!secret) {
-    throw new Error('HYP_WEBHOOK_SECRET is not configured');
-  }
 
-  const receivedSig = headers[HYP_SIGNATURE_HEADER] as string | undefined;
-  if (!receivedSig) return false;
-
-  // Strip optional "sha256=" prefix (common pattern)
-  const cleanSig = receivedSig.replace(/^sha256=/, '');
-
-  const expectedSig = crypto
-    .createHmac('sha256', secret)
-    .update(rawBody)
-    .digest('hex');
-
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(cleanSig, 'hex'),
-      Buffer.from(expectedSig, 'hex'),
-    );
-  } catch {
-    return false;
-  }
+export interface HypRawParams {
+  Id?: string;
+  CCode?: string;
+  Amount?: string;
+  ACode?: string;
+  Order?: string;
+  Fild1?: string;
+  Fild2?: string;
+  Fild3?: string;
+  Sign?: string;
+  Bank?: string;
+  Payments?: string;
+  UserId?: string;
+  Brand?: string;
+  Issuer?: string;
+  L4digit?: string;
+  Coin?: string;
+  Tmonth?: string;
+  Tyear?: string;
+  Info?: string;
+  errMsg?: string;
+  Hesh?: string;
+  TransType?: string;
+  UID?: string;
+  SpType?: string;
+  BinCard?: string;
+  [key: string]: string | undefined;
 }
 
 /**
- * Parses the raw Hyp webhook payload into a normalized transaction object.
- *
- * TODO: Update field mappings once the actual Hyp payload structure is confirmed.
- * The fields below are reasonable assumptions for Israeli payment providers.
+ * Detects whether this is a recurring (standing order / הוראת קבע) payment.
+ * Info field example: "הוראת קבע - 513093"
  */
-export function parseHypWebhook(payload: Record<string, unknown>): NormalizedTransaction {
-  const transactionId = payload['transaction_id'] as string | undefined;
+export function isRecurringDonation(info: string | undefined): boolean {
+  if (!info) return false;
+  return info.trim().startsWith('הוראת קבע');
+}
+
+/**
+ * Extracts the agreement ID from the Info field.
+ * "הוראת קבע - 513093" → "513093"
+ */
+export function extractAgreementId(info: string | undefined): string | null {
+  if (!info) return null;
+  const match = info.match(/הוראת קבע\s*-\s*(\d+)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Coin field → Currency type.
+ * 1=ILS, 2=USD, 3=EUR, 4=GBP
+ */
+function coinToCurrency(coin: string | undefined): Currency {
+  const map: Record<string, Currency> = {
+    '1': 'ILS',
+    '2': 'USD',
+    '3': 'EUR',
+    '4': 'GBP',
+  };
+  return map[coin ?? '1'] ?? 'ILS';
+}
+
+/**
+ * CCode=0 → success, anything else → failed
+ */
+function mapCCode(ccode: string | undefined): TransactionStatus {
+  return ccode === '0' ? 'succeeded' : 'failed';
+}
+
+/**
+ * Parses Hyp GET query parameters into a normalized transaction object.
+ */
+export function parseHypWebhook(params: HypRawParams): NormalizedTransaction {
+  const transactionId = params.Id;
   if (!transactionId) {
-    throw new Error('Missing transaction_id in Hyp payload');
+    throw new Error('Missing Id in Hyp payload');
   }
 
-  const email = payload['email'] as string | undefined;
+  const email = params.Fild2?.trim().toLowerCase();
   if (!email) {
-    throw new Error('Missing email in Hyp payload');
+    throw new Error(`Missing email (Fild2) in Hyp payload for transaction ${transactionId}`);
   }
 
   return {
     transactionId,
-    email: email.toLowerCase().trim(),
-    name: (payload['name'] as string | undefined) ?? '',
-    amount: String(payload['amount'] ?? '0'),
-    currency: normaliseCurrency(payload['currency'] as string | undefined),
+    email,
+    name: params.Fild1?.trim() ?? '',
+    amount: params.Amount ?? '0',
+    currency: coinToCurrency(params.Coin),
     platform: 'hyp',
-    status: mapHypStatus(payload['status'] as string | undefined),
-    transactionDate: payload['created_at']
-      ? new Date(payload['created_at'] as string)
-      : new Date(),
-    rawPayload: payload,
+    status: mapCCode(params.CCode),
+    isRecurring: isRecurringDonation(params.Info),
+    agreementId: extractAgreementId(params.Info),
+    transactionDate: new Date(),
+    rawPayload: params,
   };
-}
-
-function normaliseCurrency(raw: string | undefined): Currency {
-  const upper = (raw ?? 'ILS').toUpperCase();
-  const valid: Currency[] = ['ILS', 'USD', 'EUR', 'GBP'];
-  return valid.includes(upper as Currency) ? (upper as Currency) : 'ILS';
-}
-
-/**
- * Maps Hyp-specific status strings to our internal TransactionStatus.
- * TODO: Confirm exact status values from Hyp documentation.
- */
-function mapHypStatus(raw: string | undefined): TransactionStatus {
-  const map: Record<string, TransactionStatus> = {
-    success: 'succeeded',
-    approved: 'succeeded',
-    completed: 'succeeded',
-    failed: 'failed',
-    declined: 'failed',
-    error: 'failed',
-    refund: 'refunded',
-    refunded: 'refunded',
-    chargeback: 'refunded',
-  };
-  return map[(raw ?? '').toLowerCase()] ?? 'succeeded';
 }
