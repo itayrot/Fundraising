@@ -53,3 +53,13 @@ export const syncState = pgTable('sync_state', {
   status: varchar('status', { length: 20 }),
   details: jsonb('details'),
 });
+
+export const webhookLog = pgTable('webhook_log', {
+  id: serial('id').primaryKey(),
+  receivedAt: timestamp('received_at').defaultNow().notNull(),
+  rawQuery: jsonb('raw_query').notNull(),
+  // 'received' | 'processed' | 'duplicate' | 'error'
+  status: varchar('status', { length: 20 }).notNull().default('received'),
+  errorMessage: varchar('error_message', { length: 500 }),
+  transactionId: varchar('transaction_id', { length: 255 }),
+});

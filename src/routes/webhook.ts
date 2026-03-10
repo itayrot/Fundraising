@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { eq } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { transactions } from '../db/schema';
+import { transactions, webhookLog } from '../db/schema';
 import { parseHypWebhook, type HypRawParams } from '../lib/hyp';
 import { upsertDonor } from '../lib/donor-service';
 
@@ -24,11 +24,21 @@ router.get('/hyp', async (req: Request, res: Response) => {
 async function processHypWebhook(params: HypRawParams): Promise<void> {
   console.log('[webhook/hyp] Received:', JSON.stringify(params));
 
+  // Log every incoming request to webhook_log
+  const [logEntry] = await db
+    .insert(webhookLog)
+    .values({ rawQuery: params, status: 'received' })
+    .returning({ id: webhookLog.id });
+
   let tx;
   try {
     tx = parseHypWebhook(params);
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     console.error('[webhook/hyp] Failed to parse payload:', err);
+    await db.update(webhookLog)
+      .set({ status: 'error', errorMessage: msg })
+      .where(eq(webhookLog.id, logEntry.id));
     return;
   }
 
@@ -41,6 +51,9 @@ async function processHypWebhook(params: HypRawParams): Promise<void> {
 
   if (existing) {
     console.log(`[webhook/hyp] Duplicate transaction ${tx.transactionId} - skipping`);
+    await db.update(webhookLog)
+      .set({ status: 'duplicate', transactionId: tx.transactionId })
+      .where(eq(webhookLog.id, logEntry.id));
     return;
   }
 
@@ -58,6 +71,11 @@ async function processHypWebhook(params: HypRawParams): Promise<void> {
     transactionDate: tx.transactionDate,
     rawPayload: tx.rawPayload,
   });
+
+  // Mark log entry as processed
+  await db.update(webhookLog)
+    .set({ status: 'processed', transactionId: tx.transactionId })
+    .where(eq(webhookLog.id, logEntry.id));
 
   // Only update donor for successful charges
   if (tx.status === 'succeeded') {
