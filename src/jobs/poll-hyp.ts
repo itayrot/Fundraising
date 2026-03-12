@@ -1,7 +1,7 @@
 import 'dotenv/config';
-import { eq } from 'drizzle-orm';
+import { eq, and, isNotNull } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { transactions, donorMap, syncState } from '../db/schema';
+import { transactions, donorMap, syncState, webhookLog } from '../db/schema';
 import { fetchHypTransactions, csvRowToTransaction } from '../lib/hyp-poll';
 import { upsertDonor, markDonorPendingByEmail } from '../lib/donor-service';
 
@@ -43,7 +43,7 @@ export async function runPollHyp(): Promise<{ fetched: number; processed: number
       // Handle failed transactions - record them and mark donor Pending if recurring
       if (!row.approved) {
         const tx = csvRowToTransaction(row);
-        const email = await resolveEmail(row.firstName, row.lastName, row.nationalId);
+        const email = await resolveEmail(row.firstName, row.lastName, row.nationalId, tx.agreementId ?? null);
         tx.email = email;
 
         await db.insert(transactions).values({
@@ -82,10 +82,10 @@ export async function runPollHyp(): Promise<{ fetched: number; processed: number
         continue;
       }
 
-      // Resolve email from donor_map by name, or use synthetic
-      const email = await resolveEmail(row.firstName, row.lastName, row.nationalId);
-
       const tx = csvRowToTransaction(row);
+
+      // Resolve email: try webhook_log by agreement_id first, then donor_map by name
+      const email = await resolveEmail(row.firstName, row.lastName, row.nationalId, tx.agreementId ?? null);
       tx.email = email;
 
       // Persist transaction
@@ -127,12 +127,42 @@ export async function runPollHyp(): Promise<{ fetched: number; processed: number
 }
 
 /**
- * Tries to find an existing donor email by matching first+last name in donor_map.
- * Falls back to a synthetic email using national ID.
+ * Resolves a real donor email using the available identifiers.
+ *
+ * Priority:
+ *  1. webhook_log by agreement_id (most reliable — captured from payment page)
+ *  2. donor_map by full name (existing donor already in system)
+ *  3. Synthetic fallback from national ID
  */
-async function resolveEmail(firstName: string, lastName: string, nationalId: string): Promise<string> {
+async function resolveEmail(
+  firstName: string,
+  lastName: string,
+  nationalId: string,
+  agreementId: string | null,
+): Promise<string> {
   const fullName = `${firstName} ${lastName}`.trim();
 
+  // 1. Look up a real email captured from the payment-page webhook
+  if (agreementId) {
+    const [log] = await db
+      .select({ email: webhookLog.email })
+      .from(webhookLog)
+      .where(
+        and(
+          eq(webhookLog.agreementId, agreementId),
+          isNotNull(webhookLog.email),
+        ),
+      )
+      .orderBy(webhookLog.receivedAt)
+      .limit(1);
+
+    if (log?.email) {
+      console.log(`[poll-hyp] Resolved email for "${fullName}" via agreement_id ${agreementId}: ${log.email}`);
+      return log.email;
+    }
+  }
+
+  // 2. Fall back to donor_map by full name (donor already in system)
   const [donor] = await db
     .select({ email: donorMap.email })
     .from(donorMap)
@@ -141,9 +171,9 @@ async function resolveEmail(firstName: string, lastName: string, nationalId: str
 
   if (donor) return donor.email;
 
-  // Synthetic fallback - still records the transaction
+  // 3. Synthetic fallback - transaction is still recorded, donor won't appear in Monday
   const id = nationalId || fullName.replace(/\s+/g, '.').toLowerCase();
-  console.warn(`[poll-hyp] No email found for "${fullName}" - using synthetic: ${id}@noemail.hyp`);
+  console.warn(`[poll-hyp] No email found for "${fullName}" (agreement_id=${agreementId ?? 'none'}) - using synthetic: ${id}@noemail.hyp`);
   return `${id}@noemail.hyp`;
 }
 

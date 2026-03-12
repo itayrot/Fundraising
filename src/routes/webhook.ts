@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { eq } from 'drizzle-orm';
 import { db } from '../lib/db';
 import { transactions, webhookLog } from '../db/schema';
-import { parseHypWebhook, type HypRawParams } from '../lib/hyp';
+import { parseHypWebhook, extractAgreementId, type HypRawParams } from '../lib/hyp';
 import { upsertDonor, markDonorPendingByEmail } from '../lib/donor-service';
 
 const router = Router();
@@ -24,10 +24,19 @@ router.get('/hyp', async (req: Request, res: Response) => {
 async function processHypWebhook(params: HypRawParams): Promise<void> {
   console.log('[webhook/hyp] Received:', JSON.stringify(params));
 
+  // Extract email and agreement_id upfront for fast lookup later
+  const rawEmail = params.Fild2?.trim().toLowerCase() || null;
+  const rawAgreementId = extractAgreementId(params.Info) || null;
+
   // Log every incoming request to webhook_log
   const [logEntry] = await db
     .insert(webhookLog)
-    .values({ rawQuery: params, status: 'received' })
+    .values({
+      rawQuery: params,
+      status: 'received',
+      email: rawEmail,
+      agreementId: rawAgreementId,
+    })
     .returning({ id: webhookLog.id });
 
   let tx;
