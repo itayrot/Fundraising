@@ -98,3 +98,34 @@ async function updateExistingDonor(
 
   console.log(`[donor-service] Updated existing donor: ${tx.email}`);
 }
+
+/**
+ * Marks a recurring donor as Pending when their charge fails.
+ * Called from webhook handler when CCode != 0 on a recurring transaction.
+ */
+export async function markDonorPendingByEmail(email: string): Promise<void> {
+  const [donor] = await db
+    .select()
+    .from(donorMap)
+    .where(eq(donorMap.email, email))
+    .limit(1);
+
+  if (!donor) {
+    console.log(`[donor-service] markDonorPending: no donor found for ${email}`);
+    return;
+  }
+
+  if (donor.status === 'pending') {
+    console.log(`[donor-service] Donor ${email} already Pending`);
+    return;
+  }
+
+  await updateDonorItem(String(donor.mondayItemId), { status: 'Pending' });
+
+  await db
+    .update(donorMap)
+    .set({ status: 'pending', updatedAt: new Date() })
+    .where(eq(donorMap.id, donor.id));
+
+  console.log(`[donor-service] Marked donor Pending: ${email}`);
+}

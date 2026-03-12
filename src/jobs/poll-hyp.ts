@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../lib/db';
 import { transactions, donorMap, syncState } from '../db/schema';
 import { fetchHypTransactions, csvRowToTransaction } from '../lib/hyp-poll';
-import { upsertDonor } from '../lib/donor-service';
+import { upsertDonor, markDonorPendingByEmail } from '../lib/donor-service';
 
 /**
  * Polls Hyp API for transactions in the last 20 minutes (with overlap to avoid gaps).
@@ -40,10 +40,33 @@ export async function runPollHyp(): Promise<{ fetched: number; processed: number
 
   for (const row of rows) {
     try {
-      // Skip failed transactions
+      // Handle failed transactions - record them and mark donor Pending if recurring
       if (!row.approved) {
-        console.log(`[poll-hyp] Skipping failed transaction ${row.transactionId}`);
-        skipped++;
+        const tx = csvRowToTransaction(row);
+        const email = await resolveEmail(row.firstName, row.lastName, row.nationalId);
+        tx.email = email;
+
+        await db.insert(transactions).values({
+          transactionId: tx.transactionId,
+          email: tx.email,
+          name: tx.name || null,
+          amount: tx.amount,
+          currency: tx.currency,
+          platform: tx.platform,
+          status: tx.status,
+          isRecurring: tx.isRecurring,
+          agreementId: tx.agreementId,
+          transactionDate: tx.transactionDate,
+          rawPayload: tx.rawPayload,
+        });
+
+        if (tx.isRecurring) {
+          await markDonorPendingByEmail(tx.email);
+          console.log(`[poll-hyp] Failed recurring ${tx.transactionId} for ${tx.email} - marked Pending`);
+        } else {
+          console.log(`[poll-hyp] Failed one-time ${tx.transactionId} for ${tx.email} - recorded only`);
+        }
+        processed++;
         continue;
       }
 

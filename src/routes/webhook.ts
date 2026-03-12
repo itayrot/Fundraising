@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../lib/db';
 import { transactions, webhookLog } from '../db/schema';
 import { parseHypWebhook, type HypRawParams } from '../lib/hyp';
-import { upsertDonor } from '../lib/donor-service';
+import { upsertDonor, markDonorPendingByEmail } from '../lib/donor-service';
 
 const router = Router();
 
@@ -57,7 +57,7 @@ async function processHypWebhook(params: HypRawParams): Promise<void> {
     return;
   }
 
-  // Persist transaction
+  // Persist transaction - always, regardless of success or failure
   await db.insert(transactions).values({
     transactionId: tx.transactionId,
     email: tx.email,
@@ -77,14 +77,19 @@ async function processHypWebhook(params: HypRawParams): Promise<void> {
     .set({ status: 'processed', transactionId: tx.transactionId })
     .where(eq(webhookLog.id, logEntry.id));
 
-  // Only update donor for successful charges
   if (tx.status === 'succeeded') {
+    // Successful charge - upsert donor (create or update last donation date)
     await upsertDonor(tx);
+    console.log(`[webhook/hyp] Processed ${tx.transactionId} for ${tx.email} (${tx.isRecurring ? 'recurring' : 'one-time'})`);
   } else {
-    console.log(`[webhook/hyp] Transaction ${tx.transactionId} failed (CCode != 0) - donor not updated`);
+    // Failed charge - if recurring donor exists, mark as Pending
+    if (tx.isRecurring) {
+      await markDonorPendingByEmail(tx.email);
+      console.log(`[webhook/hyp] Failed recurring transaction ${tx.transactionId} for ${tx.email} - marked Pending`);
+    } else {
+      console.log(`[webhook/hyp] Failed one-time transaction ${tx.transactionId} for ${tx.email} - recorded only`);
+    }
   }
-
-  console.log(`[webhook/hyp] Processed ${tx.transactionId} for ${tx.email} (${tx.isRecurring ? 'recurring' : 'one-time'})`);
 }
 
 export default router;
