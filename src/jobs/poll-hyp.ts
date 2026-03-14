@@ -15,16 +15,20 @@ import { fetchHypTransactions, csvRowToTransaction } from '../lib/hyp-poll';
 export async function runPollHyp(): Promise<{ fetched: number; saved: number; skipped: number; errors: number }> {
   const now = new Date();
 
-  // Fetch today's date in YYYYMMDD format (Israel time = UTC+2/+3)
+  // Fetch date range in YYYYMMDD format (Israel time = UTC+2/+3)
   const israelOffset = 2 * 60 * 60 * 1000; // UTC+2 (adjust to +3 in summer if needed)
   const israelNow = new Date(now.getTime() + israelOffset);
-  const dateStr = israelNow.toISOString().slice(0, 10).replace(/-/g, '');
+  const todayStr = israelNow.toISOString().slice(0, 10).replace(/-/g, '');
 
-  console.log(`[poll-hyp] Running for date ${dateStr}`);
+  // TODO: revert to single-day fetch after initial backfill is confirmed
+  const sevenDaysAgo = new Date(israelNow.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const fromStr = sevenDaysAgo.toISOString().slice(0, 10).replace(/-/g, '');
+
+  console.log(`[poll-hyp] Running for date range ${fromStr} → ${todayStr}`);
 
   let rows;
   try {
-    rows = await fetchHypTransactions(dateStr, dateStr);
+    rows = await fetchHypTransactions(fromStr, todayStr);
   } catch (err) {
     console.error('[poll-hyp] Failed to fetch from Hyp API:', err);
     await updateSyncState('poll-hyp', 'error', { error: String(err) });
@@ -80,7 +84,8 @@ export async function runPollHyp(): Promise<{ fetched: number; saved: number; sk
   }
 
   await updateSyncState('poll-hyp', errors === 0 ? 'ok' : 'partial', {
-    date: dateStr,
+    dateFrom: fromStr,
+    dateTo: todayStr,
     fetched: rows.length,
     saved,
     skipped,
