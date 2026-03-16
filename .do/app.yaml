@@ -44,11 +44,84 @@ services:
       - key: CRON_SECRET
         scope: RUN_TIME
         type: SECRET
+      - key: HYP_API_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: HYP_MASOF
+        scope: RUN_TIME
+        type: SECRET
+      - key: HYP_USER
+        scope: RUN_TIME
+        type: SECRET
+      - key: HYP_PASS
+        scope: RUN_TIME
+        type: SECRET
       - key: PORT
         value: "3000"
         scope: RUN_TIME
 
 jobs:
+  - name: poll-hyp
+    environment_slug: node-js
+    github:
+      repo: your-username/monday-donations-integration  # TODO: update with your repo
+      branch: main
+    build_command: npm ci && npm run build
+    run_command: npm run job:poll-hyp
+    instance_size_slug: basic-xxs
+    # Runs every 10 minutes
+    schedule: "*/10 * * * *"
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: HYP_API_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: HYP_MASOF
+        scope: RUN_TIME
+        type: SECRET
+      - key: HYP_USER
+        scope: RUN_TIME
+        type: SECRET
+      - key: HYP_PASS
+        scope: RUN_TIME
+        type: SECRET
+
+  - name: reconcile-donors
+    environment_slug: node-js
+    github:
+      repo: your-username/monday-donations-integration  # TODO: update with your repo
+      branch: main
+    build_command: npm ci && npm run build
+    run_command: npm run job:reconcile
+    instance_size_slug: basic-xxs
+    # Runs every 15 minutes (offset from poll-hyp so it processes after new data arrives)
+    schedule: "5,20,35,50 * * * *"
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: MONDAY_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: MONDAY_MASTER_BOARD_ID
+        scope: RUN_TIME
+      - key: MONDAY_COL_EMAIL
+        scope: RUN_TIME
+      - key: MONDAY_COL_FIRST_DATE
+        scope: RUN_TIME
+      - key: MONDAY_COL_LAST_DATE
+        scope: RUN_TIME
+      - key: MONDAY_COL_AMOUNT
+        scope: RUN_TIME
+      - key: MONDAY_COL_CURRENCY
+        scope: RUN_TIME
+      - key: MONDAY_COL_PLATFORM
+        scope: RUN_TIME
+      - key: MONDAY_COL_STATUS
+        scope: RUN_TIME
+
   - name: verify-status
     environment_slug: node-js
     github:

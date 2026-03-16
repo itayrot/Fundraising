@@ -94,12 +94,18 @@ export async function createDonorItem(donor: CreateDonorInput): Promise<string> 
   return data.create_item.id;
 }
 
+/** One-time Donations board has different column IDs: email, date4, numbers */
+const oneTimeCols = {
+  email: 'email',
+  date: 'date4',
+  amount: 'numbers',
+};
+
 export async function createOneTimeDonationItem(donor: CreateDonorInput): Promise<string> {
   const columnValues = JSON.stringify({
-    [cols.email()]: donor.email,
-    [cols.firstDate()]: { date: donor.firstDonationDate },
-    [cols.amount()]: donor.amount,
-    [cols.platform()]: capitalise(donor.platform),
+    [oneTimeCols.email]: { email: donor.email, text: donor.email },
+    [oneTimeCols.date]: { date: donor.firstDonationDate },
+    [oneTimeCols.amount]: donor.amount,
   });
 
   const mutation = `
