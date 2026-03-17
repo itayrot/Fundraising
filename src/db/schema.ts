@@ -65,4 +65,6 @@ export const webhookLog = pgTable('webhook_log', {
   // Extracted for fast lookup when resolving emails for recurring donations
   email: varchar('email', { length: 255 }),
   agreementId: varchar('agreement_id', { length: 100 }),
+  // UserId from Hyp = nationalId in CSV, used to match recurring charges to donor email
+  userId: varchar('user_id', { length: 100 }),
 });

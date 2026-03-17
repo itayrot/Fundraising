@@ -96,7 +96,8 @@ export async function createDonorItem(donor: CreateDonorInput): Promise<string> 
 
 export async function createOneTimeDonationItem(donor: CreateDonorInput): Promise<string> {
   const columnValues = JSON.stringify({
-    [cols.email()]: donor.email,
+    // One-Time board uses a dedicated "email" type column (id: "email"), not the text column
+    email: { email: donor.email, text: donor.email },
     [cols.firstDate()]: { date: donor.firstDonationDate },
     [cols.amount()]: donor.amount,
     [cols.platform()]: capitalise(donor.platform),

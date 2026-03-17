@@ -25,7 +25,10 @@ router.get('/hyp', async (req: Request, res: Response) => {
 async function logHypWebhook(params: HypRawParams): Promise<void> {
   const transactionId = params.Id || null;
   const email = params.Fild2?.trim().toLowerCase() || null;
-  const agreementId = extractAgreementId(params.Info) || null;
+  // HKId is the standing order ID on first recurring payment (most reliable)
+  // Fall back to extracting from Info field for subsequent charges
+  const agreementId = params.HKId?.trim() || extractAgreementId(params.Info) || null;
+  const userId = params.UserId?.trim() || null;
 
   if (!transactionId) {
     console.warn('[webhook/hyp] Received request without Id');
@@ -43,9 +46,10 @@ async function logHypWebhook(params: HypRawParams): Promise<void> {
     transactionId,
     email,
     agreementId,
+    userId,
   });
 
-  console.log(`[webhook/hyp] Logged txId=${transactionId} email=${email ?? 'none'} agreementId=${agreementId ?? 'none'}`);
+  console.log(`[webhook/hyp] Logged txId=${transactionId} email=${email ?? 'none'} userId=${userId ?? 'none'}`);
 }
 
 export default router;
