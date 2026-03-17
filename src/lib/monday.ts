@@ -59,13 +59,18 @@ export async function findDonorByEmail(email: string): Promise<string | null> {
   return items.length > 0 ? items[0].id : null;
 }
 
+/** Monday date column format - include time for compatibility */
+function dateColVal(dateStr: string): object {
+  return { date: dateStr, time: '00:00:00' };
+}
+
 export async function createDonorItem(donor: CreateDonorInput): Promise<string> {
   const columnValues = JSON.stringify({
     // Email - plain text column
     [cols.email()]: donor.email,
-    // Dates
-    [cols.firstDate()]: { date: donor.firstDonationDate },
-    [cols.lastDate()]: { date: donor.lastDonationDate },
+    // Dates - both first and last (date4 = Date, date_mm1afpjt = Last Donation Date)
+    [cols.firstDate()]: dateColVal(donor.firstDonationDate),
+    [cols.lastDate()]: dateColVal(donor.lastDonationDate),
     // Amount
     [cols.amount()]: donor.amount,
     // Currency - status column (uses label)
@@ -94,17 +99,19 @@ export async function createDonorItem(donor: CreateDonorInput): Promise<string> 
   return data.create_item.id;
 }
 
-/** One-time Donations board has different column IDs: email, date4, numbers */
+/** One-time Donations board: column "Donor's email" has type=email, id from API (often "email") */
 const oneTimeCols = {
-  email: 'email',
+  email: () => process.env.MONDAY_ONE_TIME_COL_EMAIL || 'email',
   date: 'date4',
   amount: 'numbers',
 };
 
 export async function createOneTimeDonationItem(donor: CreateDonorInput): Promise<string> {
+  // Monday email column requires { text, email } - both required per API docs
+  const emailColId = oneTimeCols.email();
   const columnValues = JSON.stringify({
-    [oneTimeCols.email]: { email: donor.email, text: donor.email },
-    [oneTimeCols.date]: { date: donor.firstDonationDate },
+    [emailColId]: { text: donor.email, email: donor.email },
+    [oneTimeCols.date]: dateColVal(donor.firstDonationDate),
     [oneTimeCols.amount]: donor.amount,
   });
 
@@ -129,7 +136,7 @@ export async function updateDonorItem(itemId: string, updates: UpdateDonorInput)
   const columnValues: Record<string, unknown> = {};
 
   if (updates.lastDonationDate) {
-    columnValues[cols.lastDate()] = { date: updates.lastDonationDate };
+    columnValues[cols.lastDate()] = dateColVal(updates.lastDonationDate);
   }
   if (updates.status) {
     columnValues[cols.status()] = { label: updates.status };
