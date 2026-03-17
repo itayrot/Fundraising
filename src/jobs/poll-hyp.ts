@@ -1,16 +1,17 @@
 import 'dotenv/config';
-import { eq } from 'drizzle-orm';
+import { eq, and, isNotNull } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { transactions, syncState } from '../db/schema';
+import { transactions, syncState, webhookLog } from '../db/schema';
 import { fetchHypTransactions, csvRowToTransaction } from '../lib/hyp-poll';
 
 /**
  * Polls Hyp API for today's transactions and saves them to the transactions table.
  * Runs every 10 minutes via cron.
  *
- * Note: Email is not available in the Hyp CSV export. A synthetic email
- * (nationalId@noemail.hyp) is stored as placeholder. The reconcile-donors job
- * resolves real emails from webhook_log and updates donor_map + Monday.com.
+ * For each CSV row, we attempt to resolve the real donor email by cross-referencing
+ * with webhook_log using the transaction_id. If found, the real email is stored
+ * directly - no synthetic email needed. If not found, a synthetic email is used
+ * as placeholder until a webhook arrives.
  */
 export async function runPollHyp(): Promise<{ fetched: number; saved: number; skipped: number; errors: number }> {
   const now = new Date();
@@ -53,9 +54,25 @@ export async function runPollHyp(): Promise<{ fetched: number; saved: number; sk
 
       const tx = csvRowToTransaction(row);
 
-      // Use synthetic email as placeholder - reconcile job resolves real email later
-      const syntheticEmail = `${row.nationalId || row.firstName.replace(/\s+/g, '.')}@noemail.hyp`;
-      tx.email = syntheticEmail;
+      // Try to resolve real email from webhook_log by transaction_id
+      const [webhookEntry] = await db
+        .select({ email: webhookLog.email })
+        .from(webhookLog)
+        .where(
+          and(
+            eq(webhookLog.transactionId, row.transactionId),
+            isNotNull(webhookLog.email),
+          ),
+        )
+        .limit(1);
+
+      if (webhookEntry?.email) {
+        tx.email = webhookEntry.email;
+        console.log(`[poll-hyp] Resolved real email for ${tx.transactionId}: ${tx.email}`);
+      } else {
+        // No webhook found - use synthetic email as placeholder
+        tx.email = `${row.nationalId || row.firstName.replace(/\s+/g, '.')}@noemail.hyp`;
+      }
 
       await db.insert(transactions).values({
         transactionId: tx.transactionId,
@@ -71,13 +88,18 @@ export async function runPollHyp(): Promise<{ fetched: number; saved: number; sk
         rawPayload: tx.rawPayload,
       });
 
-      console.log(`[poll-hyp] Saved ${tx.transactionId} (${tx.isRecurring ? 'recurring' : 'one-time'}, ${tx.currency} ${tx.amount}, status=${tx.status})`);
+      console.log(`[poll-hyp] Saved ${tx.transactionId} (${tx.isRecurring ? 'recurring' : 'one-time'}, ${tx.currency} ${tx.amount}, status=${tx.status}, email=${tx.email})`);
       saved++;
     } catch (err) {
       console.error(`[poll-hyp] Error saving transaction ${row.transactionId}:`, err);
       errors++;
     }
   }
+
+  // Also ingest any webhook-only transactions (not in CSV) that have real emails
+  const webhookOnlyResult = await ingestWebhookOnlyTransactions();
+  saved += webhookOnlyResult.saved;
+  errors += webhookOnlyResult.errors;
 
   await updateSyncState('poll-hyp', errors === 0 ? 'ok' : 'partial', {
     date: dateStr,
@@ -89,6 +111,83 @@ export async function runPollHyp(): Promise<{ fetched: number; saved: number; sk
 
   console.log(`[poll-hyp] Done - saved: ${saved}, skipped: ${skipped}, errors: ${errors}`);
   return { fetched: rows.length, saved, skipped, errors };
+}
+
+/**
+ * Ingests transactions that arrived via webhook but were never picked up by CSV polling
+ * (e.g. transactions from previous days, or one-time donations).
+ * Only processes webhooks with a real email and CCode=0 (success).
+ */
+async function ingestWebhookOnlyTransactions(): Promise<{ saved: number; errors: number }> {
+  // Find webhook_log entries with real email that are not yet in transactions
+  const unprocessed = await db
+    .select()
+    .from(webhookLog)
+    .where(
+      and(
+        eq(webhookLog.status, 'logged'),
+        isNotNull(webhookLog.email),
+        isNotNull(webhookLog.transactionId),
+      ),
+    );
+
+  let saved = 0;
+  let errors = 0;
+
+  for (const entry of unprocessed) {
+    try {
+      if (!entry.transactionId || !entry.email) continue;
+
+      // Check if already in transactions
+      const [existing] = await db
+        .select({ id: transactions.id })
+        .from(transactions)
+        .where(eq(transactions.transactionId, entry.transactionId))
+        .limit(1);
+
+      if (existing) {
+        // Mark as processed even if already in transactions
+        await db.update(webhookLog).set({ status: 'processed' }).where(eq(webhookLog.id, entry.id));
+        continue;
+      }
+
+      const raw = entry.rawQuery as Record<string, string>;
+      const ccode = raw.CCode ?? '';
+      const status = ccode === '0' ? 'succeeded' : 'failed';
+      const amount = raw.Amount ?? '0';
+      const coinMap: Record<string, string> = { '1': 'ILS', '2': 'USD', '3': 'EUR', '4': 'GBP' };
+      const currency = coinMap[raw.Coin ?? '1'] ?? 'ILS';
+      const name = `${raw.Fild1 ?? ''}`.trim();
+      const isRecurring = !!(entry.agreementId || (raw.Payments && raw.Payments !== '1'));
+      // Use webhook received_at as the transaction date (most accurate available)
+      const transactionDate = entry.receivedAt ?? new Date();
+
+      await db.insert(transactions).values({
+        transactionId: entry.transactionId,
+        email: entry.email,
+        name: name || null,
+        amount,
+        currency,
+        platform: 'hyp',
+        status,
+        isRecurring,
+        agreementId: entry.agreementId ?? null,
+        transactionDate,
+        rawPayload: raw,
+      });
+
+      await db.update(webhookLog).set({ status: 'processed' }).where(eq(webhookLog.id, entry.id));
+
+      console.log(`[poll-hyp] Ingested webhook-only tx ${entry.transactionId} for ${entry.email} (${isRecurring ? 'recurring' : 'one-time'}, status=${status})`);
+      saved++;
+    } catch (err) {
+      console.error(`[poll-hyp] Error ingesting webhook tx ${entry.transactionId}:`, err);
+      errors++;
+    }
+  }
+
+  if (saved > 0) console.log(`[poll-hyp] Ingested ${saved} webhook-only transaction(s)`);
+  return { saved, errors };
 }
 
 async function updateSyncState(operation: string, status: string, details: object): Promise<void> {

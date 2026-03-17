@@ -43,12 +43,22 @@ export async function runReconcileDonors(): Promise<{
 
   for (const tx of succeeded) {
     try {
-      const resolvedEmail = await resolveEmail(tx.transactionId, tx.agreementId ?? null);
-      const email = resolvedEmail ?? tx.email;
+      // Extract nationalId from synthetic email (e.g. "L2533346317@noemail.hyp" → "L2533346317")
+      const nationalId = tx.email.endsWith('@noemail.hyp')
+        ? tx.email.replace('@noemail.hyp', '')
+        : null;
+
+      const resolvedEmail = await resolveEmail(tx.transactionId, tx.agreementId ?? null, nationalId);
+
+      if (!resolvedEmail) {
+        // No real email found yet - skip until webhook arrives with donor's real email
+        console.log(`[reconcile] Skipping ${tx.transactionId} - no real email found yet (nationalId: ${nationalId})`);
+        continue;
+      }
 
       const normalized: NormalizedTransaction = {
         transactionId: tx.transactionId,
-        email,
+        email: resolvedEmail,
         name: tx.name ?? '',
         amount: tx.amount,
         currency: tx.currency as Currency,
@@ -62,23 +72,20 @@ export async function runReconcileDonors(): Promise<{
 
       await upsertDonor(normalized);
 
-      // For recurring donations, find the donor's Monday item ID from donor_map
-      let mondayItemId = 0;
-      if (tx.isRecurring) {
-        const [donor] = await db
-          .select({ mondayItemId: donorMap.mondayItemId })
-          .from(donorMap)
-          .where(eq(donorMap.email, email))
-          .limit(1);
-        mondayItemId = donor ? Number(donor.mondayItemId) : 0;
-      }
+      // Find the donor's Monday item ID from donor_map
+      const [donor] = await db
+        .select({ mondayItemId: donorMap.mondayItemId })
+        .from(donorMap)
+        .where(eq(donorMap.email, resolvedEmail))
+        .limit(1);
+      const mondayItemId = donor ? Number(donor.mondayItemId) : 0;
 
       await db
         .update(transactions)
         .set({ mondayTxItemId: mondayItemId })
         .where(eq(transactions.id, tx.id));
 
-      console.log(`[reconcile] Processed ${tx.transactionId} for ${email} (${tx.isRecurring ? 'recurring' : 'one-time'})`);
+      console.log(`[reconcile] Processed ${tx.transactionId} for ${resolvedEmail} (${tx.isRecurring ? 'recurring' : 'one-time'})`);
       processed++;
     } catch (err) {
       console.error(`[reconcile] Error processing ${tx.transactionId}:`, err);
@@ -103,17 +110,25 @@ export async function runReconcileDonors(): Promise<{
 
   for (const tx of failedRecurring) {
     try {
-      const resolvedEmail = await resolveEmail(tx.transactionId, tx.agreementId ?? null);
-      const email = resolvedEmail ?? tx.email;
+      const nationalId = tx.email.endsWith('@noemail.hyp')
+        ? tx.email.replace('@noemail.hyp', '')
+        : null;
 
-      await markDonorPendingByEmail(email);
+      const resolvedEmail = await resolveEmail(tx.transactionId, tx.agreementId ?? null, nationalId);
+
+      if (!resolvedEmail) {
+        console.log(`[reconcile] Skipping failed recurring ${tx.transactionId} - no real email found yet`);
+        continue;
+      }
+
+      await markDonorPendingByEmail(resolvedEmail);
 
       await db
         .update(transactions)
         .set({ mondayTxItemId: 0 })
         .where(eq(transactions.id, tx.id));
 
-      console.log(`[reconcile] Marked Pending: ${email} (tx: ${tx.transactionId})`);
+      console.log(`[reconcile] Marked Pending: ${resolvedEmail} (tx: ${tx.transactionId})`);
       processed++;
     } catch (err) {
       console.error(`[reconcile] Error on failed recurring ${tx.transactionId}:`, err);
@@ -163,10 +178,12 @@ export async function runReconcileDonors(): Promise<{
  * Priority:
  *  1. Exact match by transaction_id (payment-page donation captured in real time)
  *  2. Match by agreement_id (first payment of a recurring agreement)
+ *  3. Match by user_id / national_id (recurring monthly charge - nationalId in CSV = UserId in webhook)
  */
 async function resolveEmail(
   transactionId: string,
   agreementId: string | null,
+  nationalId: string | null,
 ): Promise<string | null> {
   // 1. Exact match by transaction ID
   const [byTxId] = await db
@@ -182,7 +199,7 @@ async function resolveEmail(
 
   if (byTxId?.email) return byTxId.email;
 
-  // 2. Match by agreement ID (recurring donations)
+  // 2. Match by agreement ID
   if (agreementId) {
     const [byAgreement] = await db
       .select({ email: webhookLog.email })
@@ -197,6 +214,23 @@ async function resolveEmail(
       .limit(1);
 
     if (byAgreement?.email) return byAgreement.email;
+  }
+
+  // 3. Match by UserId (nationalId in CSV = UserId sent in webhook)
+  if (nationalId) {
+    const [byUserId] = await db
+      .select({ email: webhookLog.email })
+      .from(webhookLog)
+      .where(
+        and(
+          eq(webhookLog.userId, nationalId),
+          isNotNull(webhookLog.email),
+        ),
+      )
+      .orderBy(webhookLog.receivedAt)
+      .limit(1);
+
+    if (byUserId?.email) return byUserId.email;
   }
 
   return null;

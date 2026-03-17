@@ -37,6 +37,8 @@ export interface HypRawParams {
   Tmonth?: string;
   Tyear?: string;
   Info?: string;
+  // HKId = standing order (הוראת קבע) agreement ID, present on first recurring payment
+  HKId?: string;
   errMsg?: string;
   Hesh?: string;
   TransType?: string;
