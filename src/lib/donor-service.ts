@@ -4,12 +4,12 @@ import { donorMap } from '../db/schema';
 import { createDonorItem, createOneTimeDonationItem, updateDonorItem } from './monday';
 import type { NormalizedTransaction } from '../types';
 
-function todayString(): string {
-  return new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+function dateString(d: Date): string {
+  return d.toISOString().split('T')[0]; // YYYY-MM-DD
 }
 
 export async function upsertDonor(tx: NormalizedTransaction): Promise<void> {
-  const today = todayString();
+  const txDate = dateString(tx.transactionDate);
 
   // One-time donations go to a separate board, no donor record tracking
   if (!tx.isRecurring) {
@@ -19,8 +19,8 @@ export async function upsertDonor(tx: NormalizedTransaction): Promise<void> {
       amount: tx.amount,
       currency: tx.currency,
       platform: tx.platform,
-      firstDonationDate: today,
-      lastDonationDate: today,
+      firstDonationDate: txDate,
+      lastDonationDate: txDate,
       isRecurring: false,
       agreementId: null,
     });
@@ -35,9 +35,9 @@ export async function upsertDonor(tx: NormalizedTransaction): Promise<void> {
     .limit(1);
 
   if (!existing) {
-    await createNewDonor(tx, today);
+    await createNewDonor(tx, txDate);
   } else {
-    await updateExistingDonor(existing.id, Number(existing.mondayItemId), tx, today);
+    await updateExistingDonor(existing.id, Number(existing.mondayItemId), tx, txDate);
   }
 }
 
