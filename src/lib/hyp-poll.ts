@@ -130,7 +130,12 @@ export async function fetchHypTransactions(dateFrom: string, dateTo: string): Pr
 
   const text = await response.text();
 
-  // If response doesn't look like CSV (e.g. error message), throw
+  // HTML response means no transactions for the date range (HYP returns a page instead of empty CSV)
+  if (text.trimStart().startsWith('<!DOCTYPE') || text.trimStart().startsWith('<html')) {
+    return [];
+  }
+
+  // Any other non-CSV response is an unexpected error
   if (!text.includes('מספר עסקה')) {
     throw new Error(`Hyp API unexpected response: ${text.slice(0, 200)}`);
   }

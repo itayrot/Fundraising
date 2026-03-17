@@ -11,7 +11,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "job:verify-status": "tsx src/jobs/verify-status.ts",
-    "job:poll-hyp": "tsx src/jobs/poll-hyp.ts"
+    "job:poll-hyp": "tsx src/jobs/poll-hyp.ts",
+    "job:reconcile": "tsx src/jobs/reconcile-donors.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.1",

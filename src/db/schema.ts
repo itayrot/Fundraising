@@ -62,4 +62,7 @@ export const webhookLog = pgTable('webhook_log', {
   status: varchar('status', { length: 20 }).notNull().default('received'),
   errorMessage: varchar('error_message', { length: 500 }),
   transactionId: varchar('transaction_id', { length: 255 }),
+  // Extracted for fast lookup when resolving emails for recurring donations
+  email: varchar('email', { length: 255 }),
+  agreementId: varchar('agreement_id', { length: 100 }),
 });
