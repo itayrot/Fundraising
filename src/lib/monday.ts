@@ -142,6 +142,91 @@ export async function createOneTimeDonationItem(donor: CreateDonorInput): Promis
   return data.create_item.id;
 }
 
+/**
+ * Searches the One-Time board for an existing parent donor item by email.
+ * Returns the item ID if found, null otherwise.
+ */
+export async function findOneTimeDonorByEmail(email: string): Promise<string | null> {
+  const emailColId = oneTimeCols.email();
+  const query = `
+    query ($boardId: ID!, $email: String!) {
+      items_page_by_column_values(
+        limit: 1
+        board_id: $boardId
+        columns: [{ column_id: "${emailColId}", column_values: [$email] }]
+      ) {
+        items { id }
+      }
+    }
+  `;
+
+  const data = (await mondayRequest(query, {
+    boardId: process.env.MONDAY_BOARD_ONE_TIME,
+    email,
+  })) as { items_page_by_column_values: { items: { id: string }[] } };
+
+  const items = data.items_page_by_column_values?.items ?? [];
+  return items.length > 0 ? items[0].id : null;
+}
+
+/**
+ * Creates a parent donor item in the One-Time board.
+ * The item represents the donor (not a single donation).
+ * Actual donations are stored as subitems.
+ */
+export async function createOneTimeDonorParentItem(donor: {
+  email: string;
+  name?: string | null;
+}): Promise<string> {
+  const emailColId = oneTimeCols.email();
+  const columnValues = JSON.stringify({
+    [emailColId]: { text: donor.email, email: donor.email },
+  });
+
+  const mutation = `
+    mutation ($boardId: ID!, $name: String!, $columnValues: JSON!) {
+      create_item(board_id: $boardId, item_name: $name, column_values: $columnValues) {
+        id
+      }
+    }
+  `;
+
+  const data = (await mondayRequest(mutation, {
+    boardId: process.env.MONDAY_BOARD_ONE_TIME,
+    name: donor.name || donor.email,
+    columnValues,
+  })) as { create_item: { id: string } };
+
+  return data.create_item.id;
+}
+
+/**
+ * Creates a donation subitem under a parent donor item (any board).
+ * The subitem name encodes: date | amount currency | status
+ * e.g. "2025-01-15 | 100 ILS | Succeeded"
+ */
+export async function createDonationSubitem(
+  parentItemId: string,
+  donation: { date: string; amount: string | number; currency: string; status: string },
+): Promise<string> {
+  const name = `${donation.date} | ${donation.amount} ${donation.currency} | ${donation.status}`;
+
+  const mutation = `
+    mutation ($parentItemId: ID!, $name: String!) {
+      create_subitem(parent_item_id: $parentItemId, item_name: $name) {
+        id
+      }
+    }
+  `;
+
+  const data = (await mondayRequest(mutation, {
+    parentItemId,
+    name,
+  })) as { create_subitem: { id: string } };
+
+  return data.create_subitem.id;
+}
+
 export async function updateDonorItem(itemId: string, updates: UpdateDonorInput): Promise<void> {
   const columnValues: Record<string, unknown> = {};
 

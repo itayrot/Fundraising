@@ -121,7 +121,12 @@ export async function runReconcileDonors(): Promise<{
         continue;
       }
 
-      await markDonorPendingByEmail(resolvedEmail);
+      const txDate = tx.transactionDate.toISOString().split('T')[0];
+      await markDonorPendingByEmail(resolvedEmail, {
+        date: txDate,
+        amount: tx.amount,
+        currency: tx.currency,
+      });
 
       await db
         .update(transactions)
