@@ -23,6 +23,7 @@ export interface CreateDonorInput {
   amount: string;
   currency: Currency;
   platform: Platform;
+  status?: TransactionStatus;
   firstDonationDate: string;
   lastDonationDate: string;
   isRecurring: boolean;

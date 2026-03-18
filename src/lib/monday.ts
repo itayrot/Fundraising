@@ -59,13 +59,18 @@ export async function findDonorByEmail(email: string): Promise<string | null> {
   return items.length > 0 ? items[0].id : null;
 }
 
+/** Monday date column format - include time for compatibility */
+function dateColVal(dateStr: string): object {
+  return { date: dateStr, time: '00:00:00' };
+}
+
 export async function createDonorItem(donor: CreateDonorInput): Promise<string> {
   const columnValues = JSON.stringify({
     // Email - plain text column
     [cols.email()]: donor.email,
-    // Dates
-    [cols.firstDate()]: { date: donor.firstDonationDate },
-    [cols.lastDate()]: { date: donor.lastDonationDate },
+    // Dates - both first and last (date4 = Date, date_mm1afpjt = Last Donation Date)
+    [cols.firstDate()]: dateColVal(donor.firstDonationDate),
+    [cols.lastDate()]: dateColVal(donor.lastDonationDate),
     // Amount
     [cols.amount()]: donor.amount,
     // Currency - status column (uses label)
@@ -94,14 +99,29 @@ export async function createDonorItem(donor: CreateDonorInput): Promise<string> 
   return data.create_item.id;
 }
 
+/** One-time Donations board: column "Donor's email" has type=email, id from API (often "email") */
+const oneTimeCols = {
+  email: () => process.env.MONDAY_ONE_TIME_COL_EMAIL || 'email',
+  date: 'date4',
+  amount: 'numbers',
+  // Optional status column on the one-time board (status type)
+  status: () => process.env.MONDAY_ONE_TIME_COL_STATUS || null,
+};
+
 export async function createOneTimeDonationItem(donor: CreateDonorInput): Promise<string> {
-  const columnValues = JSON.stringify({
-    // One-Time board uses a dedicated "email" type column (id: "email"), not the text column
-    email: { email: donor.email, text: donor.email },
-    [cols.firstDate()]: { date: donor.firstDonationDate },
-    [cols.amount()]: donor.amount,
-    [cols.platform()]: capitalise(donor.platform),
-  });
+  // Monday email column requires { text, email } - both required per API docs
+  const emailColId = oneTimeCols.email();
+  const oneTimeStatusLabel = mapOneTimeStatusLabel(donor.status);
+  const columnValuesObj: Record<string, unknown> = {
+    [emailColId]: { text: donor.email, email: donor.email },
+    [oneTimeCols.date]: dateColVal(donor.firstDonationDate),
+    [oneTimeCols.amount]: donor.amount,
+  };
+  const oneTimeStatusColId = oneTimeCols.status();
+  if (oneTimeStatusColId && oneTimeStatusLabel) {
+    columnValuesObj[oneTimeStatusColId] = { label: oneTimeStatusLabel };
+  }
+  const columnValues = JSON.stringify(columnValuesObj);
 
   const mutation = `
     mutation ($boardId: ID!, $name: String!, $columnValues: JSON!) {
@@ -113,7 +133,9 @@ export async function createOneTimeDonationItem(donor: CreateDonorInput): Promis
 
   const data = (await mondayRequest(mutation, {
     boardId: process.env.MONDAY_BOARD_ONE_TIME,
-    name: donor.name || donor.email,
+    name: donor.status === 'failed'
+      ? `[FAILED] ${donor.name || donor.email}`
+      : (donor.name || donor.email),
     columnValues,
   })) as { create_item: { id: string } };
 
@@ -124,7 +146,7 @@ export async function updateDonorItem(itemId: string, updates: UpdateDonorInput)
   const columnValues: Record<string, unknown> = {};
 
   if (updates.lastDonationDate) {
-    columnValues[cols.lastDate()] = { date: updates.lastDonationDate };
+    columnValues[cols.lastDate()] = dateColVal(updates.lastDonationDate);
   }
   if (updates.status) {
     columnValues[cols.status()] = { label: updates.status };
@@ -156,4 +178,18 @@ export async function updateDonorItem(itemId: string, updates: UpdateDonorInput)
 
 function capitalise(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function mapOneTimeStatusLabel(status: CreateDonorInput['status']): string | null {
+  if (!status) return null;
+  switch (status) {
+    case 'succeeded':
+      return 'Succeeded';
+    case 'failed':
+      return 'Failed';
+    case 'refunded':
+      return 'Refunded';
+    default:
+      return null;
+  }
 }
