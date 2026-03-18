@@ -19,6 +19,7 @@ export async function upsertDonor(tx: NormalizedTransaction): Promise<void> {
       amount: tx.amount,
       currency: tx.currency,
       platform: tx.platform,
+      status: tx.status,
       firstDonationDate: txDate,
       lastDonationDate: txDate,
       isRecurring: false,

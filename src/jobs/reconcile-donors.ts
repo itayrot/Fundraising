@@ -13,7 +13,7 @@ import type { NormalizedTransaction, Currency, Platform } from '../types';
  *   1. Resolve real email: check webhook_log by transaction_id, then by agreement_id
  *   2. Succeeded → upsert donor_map + Monday, mark transaction as reconciled
  *   3. Failed recurring → mark donor as Pending in Monday, mark as reconciled
- *   4. Failed one-time → mark as reconciled (no donor action)
+ *   4. Failed one-time → create one-time row in Monday + mark as reconciled
  *
  * Uses mondayTxItemId as the "reconciled" marker:
  *   - NULL      = not yet reconciled
@@ -136,11 +136,11 @@ export async function runReconcileDonors(): Promise<{
     }
   }
 
-  // ── 3. Failed one-time → mark as reconciled, no action needed ────────────────
+  // ── 3. Failed one-time → create row in one-time Monday board ─────────────────
 
-  const markedCount = await db
-    .update(transactions)
-    .set({ mondayTxItemId: 0 })
+  const failedOneTime = await db
+    .select()
+    .from(transactions)
     .where(
       and(
         isNull(transactions.mondayTxItemId),
@@ -148,6 +148,50 @@ export async function runReconcileDonors(): Promise<{
         eq(transactions.isRecurring, false),
       ),
     );
+
+  console.log(`[reconcile] Found ${failedOneTime.length} unreconciled failed one-time transaction(s)`);
+
+  for (const tx of failedOneTime) {
+    try {
+      const nationalId = tx.email.endsWith('@noemail.hyp')
+        ? tx.email.replace('@noemail.hyp', '')
+        : null;
+
+      const resolvedEmail = await resolveEmail(tx.transactionId, tx.agreementId ?? null, nationalId);
+
+      if (!resolvedEmail) {
+        console.log(`[reconcile] Skipping failed one-time ${tx.transactionId} - no real email found yet`);
+        continue;
+      }
+
+      const normalized: NormalizedTransaction = {
+        transactionId: tx.transactionId,
+        email: resolvedEmail,
+        name: tx.name ?? '',
+        amount: tx.amount,
+        currency: tx.currency as Currency,
+        platform: tx.platform as Platform,
+        status: 'failed',
+        isRecurring: false,
+        agreementId: tx.agreementId ?? null,
+        transactionDate: tx.transactionDate,
+        rawPayload: tx.rawPayload,
+      };
+
+      await upsertDonor(normalized);
+
+      await db
+        .update(transactions)
+        .set({ mondayTxItemId: 0 })
+        .where(eq(transactions.id, tx.id));
+
+      console.log(`[reconcile] Logged failed one-time in Monday: ${resolvedEmail} (tx: ${tx.transactionId})`);
+      processed++;
+    } catch (err) {
+      console.error(`[reconcile] Error on failed one-time ${tx.transactionId}:`, err);
+      errors++;
+    }
+  }
 
   // ── 4. Persist run state ─────────────────────────────────────────────────────
 

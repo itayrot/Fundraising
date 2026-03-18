@@ -104,16 +104,24 @@ const oneTimeCols = {
   email: () => process.env.MONDAY_ONE_TIME_COL_EMAIL || 'email',
   date: 'date4',
   amount: 'numbers',
+  // Optional status column on the one-time board (status type)
+  status: () => process.env.MONDAY_ONE_TIME_COL_STATUS || null,
 };
 
 export async function createOneTimeDonationItem(donor: CreateDonorInput): Promise<string> {
   // Monday email column requires { text, email } - both required per API docs
   const emailColId = oneTimeCols.email();
-  const columnValues = JSON.stringify({
+  const oneTimeStatusLabel = mapOneTimeStatusLabel(donor.status);
+  const columnValuesObj: Record<string, unknown> = {
     [emailColId]: { text: donor.email, email: donor.email },
     [oneTimeCols.date]: dateColVal(donor.firstDonationDate),
     [oneTimeCols.amount]: donor.amount,
-  });
+  };
+  const oneTimeStatusColId = oneTimeCols.status();
+  if (oneTimeStatusColId && oneTimeStatusLabel) {
+    columnValuesObj[oneTimeStatusColId] = { label: oneTimeStatusLabel };
+  }
+  const columnValues = JSON.stringify(columnValuesObj);
 
   const mutation = `
     mutation ($boardId: ID!, $name: String!, $columnValues: JSON!) {
@@ -125,7 +133,9 @@ export async function createOneTimeDonationItem(donor: CreateDonorInput): Promis
 
   const data = (await mondayRequest(mutation, {
     boardId: process.env.MONDAY_BOARD_ONE_TIME,
-    name: donor.name || donor.email,
+    name: donor.status === 'failed'
+      ? `[FAILED] ${donor.name || donor.email}`
+      : (donor.name || donor.email),
     columnValues,
   })) as { create_item: { id: string } };
 
@@ -168,4 +178,18 @@ export async function updateDonorItem(itemId: string, updates: UpdateDonorInput)
 
 function capitalise(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function mapOneTimeStatusLabel(status: CreateDonorInput['status']): string | null {
+  if (!status) return null;
+  switch (status) {
+    case 'succeeded':
+      return 'Succeeded';
+    case 'failed':
+      return 'Failed';
+    case 'refunded':
+      return 'Refunded';
+    default:
+      return null;
+  }
 }
