@@ -3,6 +3,7 @@ import { eq, and, isNull, isNotNull } from 'drizzle-orm';
 import { db } from '../lib/db';
 import { transactions, webhookLog, donorMap, syncState } from '../db/schema';
 import { upsertDonor, markDonorPendingByEmail } from '../lib/donor-service';
+import { checkWebhookHealth } from '../lib/alert';
 import type { NormalizedTransaction, Currency, Platform } from '../types';
 
 /**
@@ -198,7 +199,15 @@ export async function runReconcileDonors(): Promise<{
     }
   }
 
-  // ── 4. Persist run state ─────────────────────────────────────────────────────
+  // ── 4. Webhook health check ──────────────────────────────────────────────────
+
+  try {
+    await checkWebhookHealth();
+  } catch (err) {
+    console.error('[reconcile] Webhook health check failed:', err);
+  }
+
+  // ── 5. Persist run state ─────────────────────────────────────────────────────
 
   await db
     .insert(syncState)

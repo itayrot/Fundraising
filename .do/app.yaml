@@ -87,6 +87,21 @@ jobs:
       - key: HYP_PASS
         scope: RUN_TIME
         type: SECRET
+      - key: SMTP_HOST
+        scope: RUN_TIME
+        type: SECRET
+      - key: SMTP_PORT
+        scope: RUN_TIME
+      - key: SMTP_USER
+        scope: RUN_TIME
+        type: SECRET
+      - key: SMTP_PASS
+        scope: RUN_TIME
+        type: SECRET
+      - key: ALERT_EMAIL_FROM
+        scope: RUN_TIME
+      - key: ALERT_DEV_EMAIL_TO
+        scope: RUN_TIME
 
   - name: reconcile-donors
     environment_slug: node-js
@@ -120,6 +135,21 @@ jobs:
       - key: MONDAY_COL_PLATFORM
         scope: RUN_TIME
       - key: MONDAY_COL_STATUS
+        scope: RUN_TIME
+      - key: SMTP_HOST
+        scope: RUN_TIME
+        type: SECRET
+      - key: SMTP_PORT
+        scope: RUN_TIME
+      - key: SMTP_USER
+        scope: RUN_TIME
+        type: SECRET
+      - key: SMTP_PASS
+        scope: RUN_TIME
+        type: SECRET
+      - key: ALERT_EMAIL_FROM
+        scope: RUN_TIME
+      - key: ALERT_EMAIL_TO
         scope: RUN_TIME
 
   - name: verify-status
