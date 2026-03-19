@@ -1,7 +1,13 @@
 import { eq } from 'drizzle-orm';
 import { db } from './db';
 import { donorMap } from '../db/schema';
-import { createDonorItem, createOneTimeDonationItem, updateDonorItem } from './monday';
+import {
+  createDonorItem,
+  updateDonorItem,
+  createDonationSubitem,
+  findOneTimeDonorByEmail,
+  createOneTimeDonorParentItem,
+} from './monday';
 import type { NormalizedTransaction } from '../types';
 
 function dateString(d: Date): string {
@@ -11,21 +17,23 @@ function dateString(d: Date): string {
 export async function upsertDonor(tx: NormalizedTransaction): Promise<void> {
   const txDate = dateString(tx.transactionDate);
 
-  // One-time donations go to a separate board, no donor record tracking
+  // One-time donations: one parent item per donor, each donation is a subitem
   if (!tx.isRecurring) {
-    await createOneTimeDonationItem({
-      email: tx.email,
-      name: tx.name,
+    let parentItemId = await findOneTimeDonorByEmail(tx.email);
+
+    if (!parentItemId) {
+      parentItemId = await createOneTimeDonorParentItem({ email: tx.email, name: tx.name });
+      console.log(`[donor-service] Created one-time donor item for ${tx.email} (Monday item ${parentItemId})`);
+    }
+
+    await createDonationSubitem(parentItemId, {
+      date: txDate,
       amount: tx.amount,
       currency: tx.currency,
-      platform: tx.platform,
-      status: tx.status,
-      firstDonationDate: txDate,
-      lastDonationDate: txDate,
-      isRecurring: false,
-      agreementId: null,
+      status: tx.status === 'succeeded' ? 'Succeeded' : tx.status === 'failed' ? 'Failed' : 'Refunded',
     });
-    console.log(`[donor-service] Created one-time donation for ${tx.email}`);
+
+    console.log(`[donor-service] Added donation subitem for one-time donor ${tx.email}`);
     return;
   }
 
@@ -72,6 +80,14 @@ async function createNewDonor(
     status: 'active',
   });
 
+  // Log first donation as a subitem in the donor's history
+  await createDonationSubitem(mondayItemId, {
+    date: today,
+    amount: tx.amount,
+    currency: tx.currency,
+    status: 'Succeeded',
+  });
+
   console.log(`[donor-service] Created new donor: ${tx.email} (Monday item ${mondayItemId}, recurring=${tx.isRecurring})`);
 }
 
@@ -97,14 +113,25 @@ async function updateExistingDonor(
     })
     .where(eq(donorMap.id, donorId));
 
+  // Log this donation as a new subitem in the donor's history
+  await createDonationSubitem(String(mondayItemId), {
+    date: today,
+    amount: tx.amount,
+    currency: tx.currency,
+    status: 'Succeeded',
+  });
+
   console.log(`[donor-service] Updated existing donor: ${tx.email}`);
 }
 
 /**
  * Marks a recurring donor as Pending when their charge fails.
- * Called from webhook handler when CCode != 0 on a recurring transaction.
+ * Also logs the failed donation as a subitem in the donor's history.
  */
-export async function markDonorPendingByEmail(email: string): Promise<void> {
+export async function markDonorPendingByEmail(
+  email: string,
+  failedDonation?: { date: string; amount: string | number; currency: string },
+): Promise<void> {
   const [donor] = await db
     .select()
     .from(donorMap)
@@ -127,6 +154,16 @@ export async function markDonorPendingByEmail(email: string): Promise<void> {
     .update(donorMap)
     .set({ status: 'pending', updatedAt: new Date() })
     .where(eq(donorMap.id, donor.id));
+
+  // Log the failed charge as a subitem in the donor's history
+  if (failedDonation) {
+    await createDonationSubitem(String(donor.mondayItemId), {
+      date: failedDonation.date,
+      amount: failedDonation.amount,
+      currency: failedDonation.currency,
+      status: 'Failed',
+    });
+  }
 
   console.log(`[donor-service] Marked donor Pending: ${email}`);
 }
