@@ -83,7 +83,7 @@ export async function runReconcileDonors(): Promise<{
 
       await db
         .update(transactions)
-        .set({ mondayTxItemId: mondayItemId })
+        .set({ mondayTxItemId: mondayItemId, email: resolvedEmail })
         .where(eq(transactions.id, tx.id));
 
       console.log(`[reconcile] Processed ${tx.transactionId} for ${resolvedEmail} (${tx.isRecurring ? 'recurring' : 'one-time'})`);
@@ -131,7 +131,7 @@ export async function runReconcileDonors(): Promise<{
 
       await db
         .update(transactions)
-        .set({ mondayTxItemId: 0 })
+        .set({ mondayTxItemId: 0, email: resolvedEmail })
         .where(eq(transactions.id, tx.id));
 
       console.log(`[reconcile] Marked Pending: ${resolvedEmail} (tx: ${tx.transactionId})`);
@@ -188,7 +188,7 @@ export async function runReconcileDonors(): Promise<{
 
       await db
         .update(transactions)
-        .set({ mondayTxItemId: 0 })
+        .set({ mondayTxItemId: 0, email: resolvedEmail })
         .where(eq(transactions.id, tx.id));
 
       console.log(`[reconcile] Logged failed one-time in Monday: ${resolvedEmail} (tx: ${tx.transactionId})`);

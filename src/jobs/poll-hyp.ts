@@ -54,25 +54,47 @@ export async function runPollHyp(): Promise<{ fetched: number; saved: number; sk
 
       const tx = csvRowToTransaction(row);
 
-      // Try to resolve real email from webhook_log by transaction_id
-      const [webhookEntry] = await db
+      // Resolve real email from webhook_log using three fallback strategies
+      let resolvedEmail: string | null = null;
+
+      // 1. Exact match by transaction ID (one-time donations + first recurring charge)
+      const [byTxId] = await db
         .select({ email: webhookLog.email })
         .from(webhookLog)
-        .where(
-          and(
-            eq(webhookLog.transactionId, row.transactionId),
-            isNotNull(webhookLog.email),
-          ),
-        )
+        .where(and(eq(webhookLog.transactionId, row.transactionId), isNotNull(webhookLog.email)))
         .limit(1);
+      if (byTxId?.email) resolvedEmail = byTxId.email;
 
-      if (webhookEntry?.email) {
-        tx.email = webhookEntry.email;
-        console.log(`[poll-hyp] Resolved real email for ${tx.transactionId}: ${tx.email}`);
-      } else {
-        // No webhook found - use synthetic email as placeholder
-        tx.email = `${row.nationalId || row.firstName.replace(/\s+/g, '.')}@noemail.hyp`;
+      // 2. Match by agreement ID (recurring monthly charges — email from the original signup webhook)
+      if (!resolvedEmail && tx.agreementId) {
+        const [byAgreement] = await db
+          .select({ email: webhookLog.email })
+          .from(webhookLog)
+          .where(and(eq(webhookLog.agreementId, tx.agreementId), isNotNull(webhookLog.email)))
+          .orderBy(webhookLog.receivedAt)
+          .limit(1);
+        if (byAgreement?.email) resolvedEmail = byAgreement.email;
       }
+
+      // 3. Match by national ID / UserId (CSV nationalId = webhook UserId)
+      if (!resolvedEmail && row.nationalId) {
+        const [byUserId] = await db
+          .select({ email: webhookLog.email })
+          .from(webhookLog)
+          .where(and(eq(webhookLog.userId, row.nationalId), isNotNull(webhookLog.email)))
+          .orderBy(webhookLog.receivedAt)
+          .limit(1);
+        if (byUserId?.email) resolvedEmail = byUserId.email;
+      }
+
+      if (!resolvedEmail) {
+        console.log(`[poll-hyp] No real email found for ${tx.transactionId}, skipping until webhook arrives`);
+        skipped++;
+        continue;
+      }
+
+      tx.email = resolvedEmail;
+      console.log(`[poll-hyp] Resolved email for ${tx.transactionId}: ${tx.email}`);
 
       await db.insert(transactions).values({
         transactionId: tx.transactionId,
