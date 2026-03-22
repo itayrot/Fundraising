@@ -152,6 +152,51 @@ jobs:
       - key: ALERT_EMAIL_TO
         scope: RUN_TIME
 
+  - name: backfill-history
+    environment_slug: node-js
+    github:
+      repo: itayrot/Fundraising
+      branch: features/emails_double_check
+    build_command: npm ci && npm run build
+    run_command: npm run script:backfill -- --reconcile
+    instance_size_slug: basic-xxs
+    # ONE-TIME JOB - no schedule means it runs once on deploy. Remove after it runs successfully.
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: MONDAY_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: MONDAY_MASTER_BOARD_ID
+        scope: RUN_TIME
+      - key: MONDAY_COL_EMAIL
+        scope: RUN_TIME
+      - key: MONDAY_COL_FIRST_DATE
+        scope: RUN_TIME
+      - key: MONDAY_COL_LAST_DATE
+        scope: RUN_TIME
+      - key: MONDAY_COL_AMOUNT
+        scope: RUN_TIME
+      - key: MONDAY_COL_CURRENCY
+        scope: RUN_TIME
+      - key: MONDAY_COL_PLATFORM
+        scope: RUN_TIME
+      - key: MONDAY_COL_STATUS
+        scope: RUN_TIME
+      - key: HYP_API_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: HYP_MASOF
+        scope: RUN_TIME
+        type: SECRET
+      - key: HYP_USER
+        scope: RUN_TIME
+        type: SECRET
+      - key: HYP_PASS
+        scope: RUN_TIME
+        type: SECRET
+
   - name: verify-status
     environment_slug: node-js
     github:
