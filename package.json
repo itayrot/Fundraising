@@ -7,14 +7,15 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:generate": "drizzle-kit generate:pg",
+    "db:push": "drizzle-kit push:pg",
     "db:studio": "drizzle-kit studio",
     "job:verify-status": "tsx src/jobs/verify-status.ts",
     "job:poll-hyp": "tsx src/jobs/poll-hyp.ts",
     "job:reconcile": "tsx src/jobs/reconcile-donors.ts",
     "script:fix-noemail": "tsx scripts/fix-noemail-transactions.ts",
-    "script:import-registry": "tsx scripts/import-customer-registry.ts"
+    "script:import-registry": "tsx scripts/import-customer-registry.ts",
+    "script:backfill": "tsx scripts/backfill-history.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.1",
