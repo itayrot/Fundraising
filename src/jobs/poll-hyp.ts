@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { eq, and, isNotNull } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { transactions, syncState, webhookLog } from '../db/schema';
+import { transactions, syncState, webhookLog, customerRegistry } from '../db/schema';
 import { fetchHypTransactions, csvRowToTransaction } from '../lib/hyp-poll';
 
 /**
@@ -85,6 +85,19 @@ export async function runPollHyp(): Promise<{ fetched: number; saved: number; sk
           .orderBy(webhookLog.receivedAt)
           .limit(1);
         if (byUserId?.email) resolvedEmail = byUserId.email;
+      }
+
+      // 4. Fallback: customer_registry (manually imported CRM / spreadsheet)
+      if (!resolvedEmail && row.nationalId) {
+        const [fromRegistry] = await db
+          .select({ email: customerRegistry.email })
+          .from(customerRegistry)
+          .where(eq(customerRegistry.nationalId, row.nationalId))
+          .limit(1);
+        if (fromRegistry?.email) {
+          resolvedEmail = fromRegistry.email;
+          console.log(`[poll-hyp] Resolved email from customer_registry for ${tx.transactionId}: ${resolvedEmail}`);
+        }
       }
 
       if (!resolvedEmail) {

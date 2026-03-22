@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { eq, and, isNull, isNotNull } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { transactions, webhookLog, donorMap, syncState } from '../db/schema';
+import { transactions, webhookLog, donorMap, syncState, customerRegistry } from '../db/schema';
 import { upsertDonor, markDonorPendingByEmail } from '../lib/donor-service';
 import { checkWebhookHealth } from '../lib/alert';
 import type { NormalizedTransaction, Currency, Platform } from '../types';
@@ -289,6 +289,20 @@ async function resolveEmail(
       .limit(1);
 
     if (byUserId?.email) return byUserId.email;
+  }
+
+  // 4. Fallback: customer_registry (manually imported CRM / spreadsheet)
+  if (nationalId) {
+    const [fromRegistry] = await db
+      .select({ email: customerRegistry.email })
+      .from(customerRegistry)
+      .where(eq(customerRegistry.nationalId, nationalId))
+      .limit(1);
+
+    if (fromRegistry?.email) {
+      console.log(`[reconcile] Resolved email from customer_registry for nationalId ${nationalId}`);
+      return fromRegistry.email;
+    }
   }
 
   return null;

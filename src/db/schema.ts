@@ -54,6 +54,21 @@ export const syncState = pgTable('sync_state', {
   details: jsonb('details'),
 });
 
+/**
+ * Manual customer registry imported from the client's CRM / spreadsheet.
+ * Used as a last-resort email lookup for recurring donors whose original
+ * webhook predates the system or whose email was never captured.
+ */
+export const customerRegistry = pgTable('customer_registry', {
+  id: serial('id').primaryKey(),
+  nationalId: varchar('national_id', { length: 50 }).unique().notNull(),
+  email: varchar('email', { length: 255 }).notNull(),
+  name: varchar('name', { length: 255 }),
+  source: varchar('source', { length: 100 }).default('import'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
 export const webhookLog = pgTable('webhook_log', {
   id: serial('id').primaryKey(),
   receivedAt: timestamp('received_at').defaultNow().notNull(),

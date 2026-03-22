@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Donation Flow Diagram</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 32px 24px;
+    }
+    h1 {
+      text-align: center;
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      text-align: center;
+      color: #94a3b8;
+      font-size: 0.9rem;
+      margin-bottom: 40px;
+    }
+    .tabs {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 32px;
+      flex-wrap: wrap;
+    }
+    .tab {
+      padding: 8px 20px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      background: #1e293b;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+    }
+    .tab:hover { background: #273344; color: #e2e8f0; }
+    .tab.active {
+      background: #3b82f6;
+      border-color: #3b82f6;
+      color: #fff;
+      font-weight: 600;
+    }
+    .diagram-container {
+      background: #1e293b;
+      border: 1px solid #2d3f55;
+      border-radius: 16px;
+      padding: 40px 32px;
+      max-width: 1200px;
+      margin: 0 auto 40px;
+      overflow-x: auto;
+      min-height: 300px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .diagram-container svg { max-width: 100%; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .legend {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+    }
+    .legend-item {
+      background: #1e293b;
+      border: 1px solid #2d3f55;
+      border-radius: 10px;
+      padding: 14px 16px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .legend-dot {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      margin-top: 4px;
+      flex-shrink: 0;
+    }
+    .legend-item h4 { font-size: 0.85rem; font-weight: 600; color: #f1f5f9; margin-bottom: 3px; }
+    .legend-item p  { font-size: 0.78rem; color: #94a3b8; line-height: 1.4; }
+  </style>
+</head>
+<body>
+
+<h1>Donation System — Flow Diagram</h1>
+<p class="subtitle">מפת זרימת המידע המלאה — מ-Hyp עד Monday.com</p>
+
+<div class="tabs">
+  <button class="tab active" onclick="showPanel('full', this)">זרימה מלאה</button>
+  <button class="tab" onclick="showPanel('poll', this)">poll-hyp</button>
+  <button class="tab" onclick="showPanel('reconcile', this)">reconcile-donors</button>
+  <button class="tab" onclick="showPanel('email', this)">פתרון מייל</button>
+</div>
+
+<div id="panel-full" class="panel active">
+  <div class="diagram-container" id="diagram-full"></div>
+</div>
+<div id="panel-poll" class="panel">
+  <div class="diagram-container" id="diagram-poll"></div>
+</div>
+<div id="panel-reconcile" class="panel">
+  <div class="diagram-container" id="diagram-reconcile"></div>
+</div>
+<div id="panel-email" class="panel">
+  <div class="diagram-container" id="diagram-email"></div>
+</div>
+
+<div class="legend">
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#3b82f6"></div>
+    <div><h4>מקורות חיצוניים</h4><p>Hyp webhook + CSV API</p></div>
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#10b981"></div>
+    <div><h4>Jobs / Routes</h4><p>poll-hyp, reconcile-donors, verify-status, webhook.ts</p></div>
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#a78bfa"></div>
+    <div><h4>טבלאות Postgres</h4><p>webhook_log, transactions, donor_map, sync_state</p></div>
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#f59e0b"></div>
+    <div><h4>Monday.com</h4><p>Recurring Board + One-Time Board</p></div>
+  </div>
+</div>
+
+<script>
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'dark',
+  themeVariables: {
+    primaryColor: '#1e293b',
+    primaryTextColor: '#e2e8f0',
+    primaryBorderColor: '#475569',
+    lineColor: '#64748b',
+    secondaryColor: '#0f172a',
+    tertiaryColor: '#1e293b',
+    fontSize: '14px',
+  },
+  flowchart: { curve: 'basis', padding: 20 },
+});
+
+const diagrams = {
+  full: `flowchart TB
+  classDef ext  fill:#1d4ed8,stroke:#3b82f6,color:#fff
+  classDef job  fill:#065f46,stroke:#10b981,color:#fff
+  classDef tbl  fill:#7c3aed,stroke:#a78bfa,color:#fff
+  classDef mon  fill:#92400e,stroke:#f59e0b,color:#fff
+  classDef rt   fill:#1e3a5f,stroke:#60a5fa,color:#fff
+
+  HYP_WH["Hyp Webhook GET\n/api/webhook/hyp"]:::ext
+  HYP_CSV["Hyp API\nexportXLS CSV"]:::ext
+
+  WH["webhook.ts\nlogHypWebhook"]:::rt
+  POLL["poll-hyp\nevery 10 min"]:::job
+  ING["ingestWebhookOnly\npart of poll-hyp"]:::job
+  REC["reconcile-donors\nevery 10 min"]:::job
+  VER["verify-status\ndaily"]:::job
+
+  WL[("webhook_log\ntx_id, email\nagreement_id, user_id")]:::tbl
+  TX[("transactions\nemail, status, is_recurring\nmonday_tx_item_id")]:::tbl
+  DM[("donor_map\nemail, monday_item_id, status")]:::tbl
+  SS[("sync_state")]:::tbl
+
+  M_REC["Monday\nRecurring Board"]:::mon
+  M_OT["Monday\nOne-Time Board"]:::mon
+
+  HYP_WH --> WH --> WL
+  HYP_CSV --> POLL
+  WL -->|resolve email| POLL
+  POLL -->|valid email only| TX
+  WL --> ING --> TX
+  POLL --> SS
+  TX --> REC
+  WL --> REC
+  REC -->|update email| TX
+  REC --> SS
+  REC -->|recurring succeeded| DM
+  REC -->|recurring failed| DM
+  DM --> M_REC
+  REC -->|one-time| M_OT
+  DM --> VER --> M_REC
+  VER --> SS`,
+
+  poll: `flowchart TD
+  classDef dec  fill:#1e3a5f,stroke:#60a5fa,color:#fff
+  classDef act  fill:#065f46,stroke:#10b981,color:#fff
+  classDef tbl  fill:#7c3aed,stroke:#a78bfa,color:#fff
+  classDef wrn  fill:#4a1d1d,stroke:#f87171,color:#fff
+
+  START(["runPollHyp"]):::act
+  FETCH["fetchHypTransactions\nCSV from Hyp API"]:::act
+  EXIST{Already in transactions?}:::dec
+  SKIP1[skip]:::wrn
+  R1{email by transactionId?}:::dec
+  R2{email by agreementId?}:::dec
+  R3{email by nationalId?}:::dec
+  SKIP2[skip - retry next run]:::wrn
+  SAVE[("transactions INSERT")]:::tbl
+  INGEST["ingestWebhookOnly"]:::act
+  INGEST2[("transactions INSERT")]:::tbl
+  SS[("sync_state")]:::tbl
+
+  START --> FETCH --> EXIST
+  EXIST -->|yes| SKIP1
+  EXIST -->|no| R1
+  R1 -->|yes| SAVE
+  R1 -->|no| R2
+  R2 -->|yes| SAVE
+  R2 -->|no| R3
+  R3 -->|yes| SAVE
+  R3 -->|no| SKIP2
+  SAVE --> INGEST --> INGEST2 --> SS`,
+
+  reconcile: `flowchart TD
+  classDef dec  fill:#1e3a5f,stroke:#60a5fa,color:#fff
+  classDef act  fill:#065f46,stroke:#10b981,color:#fff
+  classDef tbl  fill:#7c3aed,stroke:#a78bfa,color:#fff
+  classDef mon  fill:#92400e,stroke:#f59e0b,color:#fff
+  classDef wrn  fill:#4a1d1d,stroke:#f87171,color:#fff
+
+  START(["runReconcileDonors"]):::act
+  Q1["fetch unreconciled succeeded"]:::act
+  RE{resolveEmail?}:::dec
+  SKIP[skip - waiting for email]:::wrn
+  UPSERT["upsertDonor"]:::act
+  DEC2{recurring?}:::dec
+  DM[("donor_map create/update")]:::tbl
+  M_REC["Monday Recurring Board"]:::mon
+  M_OT["Monday One-Time Board"]:::mon
+  UPD[("transactions update\nemail + monday_tx_item_id")]:::tbl
+  Q2["fetch unreconciled failed recurring"]:::act
+  PEND["markDonorPending"]:::act
+  DM2[("donor_map status=pending")]:::tbl
+  Q3["fetch unreconciled failed one-time"]:::act
+  FOTU["upsertDonor status=Failed"]:::act
+
+  START --> Q1 --> RE
+  RE -->|not found| SKIP
+  RE -->|found| UPSERT --> DEC2
+  DEC2 -->|yes| DM --> M_REC --> UPD
+  DEC2 -->|no| M_OT --> UPD
+  START --> Q2 --> PEND --> DM2 --> M_REC
+  START --> Q3 --> FOTU --> M_OT`,
+
+  email: `flowchart TD
+  classDef dec  fill:#1e3a5f,stroke:#60a5fa,color:#fff
+  classDef ok   fill:#065f46,stroke:#10b981,color:#fff
+  classDef fail fill:#4a1d1d,stroke:#f87171,color:#fff
+  classDef tbl  fill:#7c3aed,stroke:#a78bfa,color:#fff
+
+  WL[("webhook_log")]:::tbl
+  START(["resolveEmail"])
+  S1{by transactionId?}:::dec
+  S2{by agreementId?}:::dec
+  S3{by userId / nationalId?}:::dec
+  F1["Found - one-time or first charge"]:::ok
+  F2["Found - monthly recurring\nfrom original signup webhook"]:::ok
+  F3["Found - by national ID"]:::ok
+  NF["Not found - skip this run"]:::fail
+
+  START --> S1
+  S1 -->|found| F1
+  S1 -->|not found| S2
+  S2 -->|found| F2
+  S2 -->|not found| S3
+  S3 -->|found| F3
+  S3 -->|not found| NF
+  WL -.-> S1
+  WL -.-> S2
+  WL -.-> S3`
+};
+
+const rendered = {};
+
+async function showPanel(name, btn) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  btn.classList.add('active');
+
+  if (rendered[name]) return;
+
+  try {
+    const { svg } = await mermaid.render('svg-' + name, diagrams[name]);
+    document.getElementById('diagram-' + name).innerHTML = svg;
+    rendered[name] = true;
+  } catch (e) {
+    document.getElementById('diagram-' + name).innerHTML =
+      '<p style="color:#f87171">Render error: ' + e.message + '</p>';
+    console.error('[mermaid]', name, e);
+  }
+}
+
+// Render first panel on load
+window.addEventListener('DOMContentLoaded', () => {
+  showPanel('full', document.querySelector('.tab.active'));
+});
+</script>
+</body>
+</html>
