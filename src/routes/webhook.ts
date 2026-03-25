@@ -23,12 +23,13 @@ router.get('/hyp', async (req: Request, res: Response) => {
 });
 
 async function logHypWebhook(params: HypRawParams): Promise<void> {
-  const transactionId = params.Id || null;
-  const email = params.Fild2?.trim().toLowerCase() || null;
-  // HKId is the standing order ID on first recurring payment (most reliable)
-  // Fall back to extracting from Info field for subsequent charges
-  const agreementId = params.HKId?.trim() || extractAgreementId(params.Info) || null;
-  const userId = params.UserId?.trim() || null;
+  const transactionId = params.Id || params.id || null;
+  // Fild2 = donor email. Check both casings (Hyp/HTTP may send fild2 or Fild2)
+  const email = (params.Fild2 || params.fild2 || '')?.trim().toLowerCase() || null;
+  // HKId = standing order ID on first recurring payment (most reliable)
+  const agreementId = (params.HKId || params.hkId || '')?.trim() || extractAgreementId(params.Info) || null;
+  // UserId = nationalId (teudat zehut), used to match CSV charges to donor
+  const userId = (params.UserId || params.userId || '')?.trim() || null;
 
   if (!transactionId) {
     console.warn('[webhook/hyp] Received request without Id');

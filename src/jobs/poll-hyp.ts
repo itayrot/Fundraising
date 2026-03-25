@@ -186,16 +186,23 @@ async function ingestWebhookOnlyTransactions(): Promise<{ saved: number; errors:
         continue;
       }
 
-      const raw = entry.rawQuery as Record<string, string>;
+      // raw_query may be stored as a nested JSON string in jsonb - parse it
+      const rawStored = entry.rawQuery;
+      const raw: Record<string, string> = typeof rawStored === 'string'
+        ? JSON.parse(rawStored)
+        : rawStored as Record<string, string>;
       const ccode = raw.CCode ?? '';
       const status = ccode === '0' ? 'succeeded' : 'failed';
       const amount = raw.Amount ?? '0';
       const coinMap: Record<string, string> = { '1': 'ILS', '2': 'USD', '3': 'EUR', '4': 'GBP' };
       const currency = coinMap[raw.Coin ?? '1'] ?? 'ILS';
       const name = `${raw.Fild1 ?? ''}`.trim();
-      const isRecurring = !!(entry.agreementId || (raw.Payments && raw.Payments !== '1'));
+      // Recurring if: has agreement_id (from HKId), or HKId in raw, or Payments > 1
+      const isRecurring = !!(entry.agreementId || raw.HKId || (raw.Payments && raw.Payments !== '1'));
       // Use webhook received_at as the transaction date (most accurate available)
       const transactionDate = entry.receivedAt ?? new Date();
+
+      const agreementId = entry.agreementId || raw.HKId || null;
 
       await db.insert(transactions).values({
         transactionId: entry.transactionId,
@@ -206,7 +213,7 @@ async function ingestWebhookOnlyTransactions(): Promise<{ saved: number; errors:
         platform: 'hyp',
         status,
         isRecurring,
-        agreementId: entry.agreementId ?? null,
+        agreementId,
         transactionDate,
         rawPayload: raw,
       });
