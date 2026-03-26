@@ -4,6 +4,7 @@ import { donorMap } from '../db/schema';
 import {
   createDonorItem,
   updateDonorItem,
+  updateOneTimeParentItem,
   createDonationSubitem,
   findOneTimeDonorByEmail,
   createOneTimeDonorParentItem,
@@ -14,7 +15,7 @@ function dateString(d: Date): string {
   return d.toISOString().split('T')[0]; // YYYY-MM-DD
 }
 
-export async function upsertDonor(tx: NormalizedTransaction): Promise<void> {
+export async function upsertDonor(tx: NormalizedTransaction): Promise<number> {
   const txDate = dateString(tx.transactionDate);
 
   // One-time donations: one parent item per donor, each donation is a subitem
@@ -22,9 +23,21 @@ export async function upsertDonor(tx: NormalizedTransaction): Promise<void> {
     let parentItemId = await findOneTimeDonorByEmail(tx.email);
 
     if (!parentItemId) {
-      parentItemId = await createOneTimeDonorParentItem({ email: tx.email, name: tx.name });
+      parentItemId = await createOneTimeDonorParentItem({
+        email: tx.email,
+        name: tx.name,
+        date: txDate,
+        amount: tx.amount,
+        currency: tx.currency,
+      });
       console.log(`[donor-service] Created one-time donor item for ${tx.email} (Monday item ${parentItemId})`);
     }
+
+    await updateOneTimeParentItem(parentItemId, {
+      date: txDate,
+      amount: tx.amount,
+      currency: tx.currency,
+    });
 
     await createDonationSubitem(parentItemId, {
       date: txDate,
@@ -34,7 +47,7 @@ export async function upsertDonor(tx: NormalizedTransaction): Promise<void> {
     });
 
     console.log(`[donor-service] Added donation subitem for one-time donor ${tx.email}`);
-    return;
+    return Number(parentItemId);
   }
 
   const [existing] = await db
@@ -43,31 +56,36 @@ export async function upsertDonor(tx: NormalizedTransaction): Promise<void> {
     .where(eq(donorMap.email, tx.email))
     .limit(1);
 
+  let mondayItemId: number;
+
   if (!existing) {
-    await createNewDonor(tx, txDate);
+    mondayItemId = await createNewDonor(tx, txDate);
   } else {
+    mondayItemId = Number(existing.mondayItemId);
     try {
-      await updateExistingDonor(existing.id, Number(existing.mondayItemId), tx, txDate);
+      await updateExistingDonor(existing.id, mondayItemId, tx, txDate);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '';
       if (msg.includes('inactive') || msg.includes('inactiveItems')) {
         console.log(
           `[donor-service] Monday item ${existing.mondayItemId} is deleted/archived, recreating for ${tx.email}`,
         );
-        const newId = await recreateDonor(existing.id, tx, txDate);
-        await updateExistingDonor(existing.id, newId, tx, txDate);
+        mondayItemId = await recreateDonor(existing.id, tx, txDate);
+        await updateExistingDonor(existing.id, mondayItemId, tx, txDate);
       } else {
         throw err;
       }
     }
   }
+
+  return mondayItemId;
 }
 
 async function createNewDonor(
   tx: NormalizedTransaction,
   today: string,
   mondayBoardStatus: 'Active' | 'Pending' = 'Active',
-): Promise<void> {
+): Promise<number> {
   const mondayItemId = await createDonorItem({
     email: tx.email,
     name: tx.name,
@@ -104,6 +122,7 @@ async function createNewDonor(
   });
 
   console.log(`[donor-service] Created new donor: ${tx.email} (Monday item ${mondayItemId}, recurring=${tx.isRecurring})`);
+  return Number(mondayItemId);
 }
 
 async function recreateDonor(existingDonorId: number, tx: NormalizedTransaction, today: string): Promise<number> {

@@ -100,14 +100,13 @@ export async function runPollHyp(): Promise<{ fetched: number; saved: number; sk
         }
       }
 
-      if (!resolvedEmail) {
-        console.log(`[poll-hyp] No real email found for ${tx.transactionId}, skipping until webhook arrives`);
-        skipped++;
-        continue;
+      if (resolvedEmail) {
+        tx.email = resolvedEmail;
+        console.log(`[poll-hyp] Resolved email for ${tx.transactionId}: ${tx.email}`);
+      } else {
+        tx.email = `${row.nationalId || tx.transactionId}@noemail.hyp`;
+        console.log(`[poll-hyp] No real email for ${tx.transactionId}, saving with synthetic: ${tx.email}`);
       }
-
-      tx.email = resolvedEmail;
-      console.log(`[poll-hyp] Resolved email for ${tx.transactionId}: ${tx.email}`);
 
       await db.insert(transactions).values({
         transactionId: tx.transactionId,

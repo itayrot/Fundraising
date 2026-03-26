@@ -1,10 +1,13 @@
 import 'dotenv/config';
 import { eq, and, isNull, isNotNull, not, like } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { transactions, webhookLog, donorMap, syncState, customerRegistry } from '../db/schema';
+import { transactions, webhookLog, syncState, customerRegistry } from '../db/schema';
 import { upsertDonor, ensureDonorPending } from '../lib/donor-service';
 import { checkWebhookHealth } from '../lib/alert';
 import type { NormalizedTransaction, Currency, Platform } from '../types';
+
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const API_DELAY = 1500;
 
 /**
  * Reconciles unprocessed transactions against webhook_log to build donor_map
@@ -44,16 +47,18 @@ export async function runReconcileDonors(): Promise<{
 
   for (const tx of succeeded) {
     try {
-      // Extract nationalId from synthetic email (e.g. "L2533346317@noemail.hyp" → "L2533346317")
-      const nationalId = tx.email.endsWith('@noemail.hyp')
-        ? tx.email.replace('@noemail.hyp', '')
-        : null;
+      const isSynthetic = tx.email.endsWith('@noemail.hyp');
+      let resolvedEmail: string | null;
 
-      const resolvedEmail = await resolveEmail(tx.transactionId, tx.agreementId ?? null, nationalId);
+      if (!isSynthetic) {
+        resolvedEmail = tx.email;
+      } else {
+        const nationalId = tx.email.replace('@noemail.hyp', '');
+        resolvedEmail = await resolveEmail(tx.transactionId, tx.agreementId ?? null, nationalId);
+      }
 
       if (!resolvedEmail) {
-        // No real email found yet - skip until webhook arrives with donor's real email
-        console.log(`[reconcile] Skipping ${tx.transactionId} - no real email found yet (nationalId: ${nationalId})`);
+        console.log(`[reconcile] Skipping ${tx.transactionId} - no real email found yet`);
         continue;
       }
 
@@ -71,23 +76,16 @@ export async function runReconcileDonors(): Promise<{
         rawPayload: tx.rawPayload,
       };
 
-      await upsertDonor(normalized);
-
-      // Find the donor's Monday item ID from donor_map
-      const [donor] = await db
-        .select({ mondayItemId: donorMap.mondayItemId })
-        .from(donorMap)
-        .where(eq(donorMap.email, resolvedEmail))
-        .limit(1);
-      const mondayItemId = donor ? Number(donor.mondayItemId) : 0;
+      const mondayItemId = await upsertDonor(normalized);
 
       await db
         .update(transactions)
-        .set({ mondayTxItemId: mondayItemId, email: resolvedEmail })
+        .set({ mondayTxItemId: mondayItemId || 0, email: resolvedEmail })
         .where(eq(transactions.id, tx.id));
 
-      console.log(`[reconcile] Processed ${tx.transactionId} for ${resolvedEmail} (${tx.isRecurring ? 'recurring' : 'one-time'})`);
+      console.log(`[reconcile] Processed ${tx.transactionId} for ${resolvedEmail} (${tx.isRecurring ? 'recurring' : 'one-time'}, mondayItem=${mondayItemId})`);
       processed++;
+      await delay(API_DELAY);
     } catch (err) {
       console.error(`[reconcile] Error processing ${tx.transactionId}:`, err);
       errors++;
@@ -111,11 +109,15 @@ export async function runReconcileDonors(): Promise<{
 
   for (const tx of failedRecurring) {
     try {
-      const nationalId = tx.email.endsWith('@noemail.hyp')
-        ? tx.email.replace('@noemail.hyp', '')
-        : null;
+      const isSynthetic = tx.email.endsWith('@noemail.hyp');
+      let resolvedEmail: string | null;
 
-      const resolvedEmail = await resolveEmail(tx.transactionId, tx.agreementId ?? null, nationalId);
+      if (!isSynthetic) {
+        resolvedEmail = tx.email;
+      } else {
+        const nationalId = tx.email.replace('@noemail.hyp', '');
+        resolvedEmail = await resolveEmail(tx.transactionId, tx.agreementId ?? null, nationalId);
+      }
 
       if (!resolvedEmail) {
         console.log(`[reconcile] Skipping failed recurring ${tx.transactionId} - no real email found yet`);
@@ -145,6 +147,7 @@ export async function runReconcileDonors(): Promise<{
 
       console.log(`[reconcile] Marked/Created Pending: ${resolvedEmail} (tx: ${tx.transactionId})`);
       processed++;
+      await delay(API_DELAY);
     } catch (err) {
       console.error(`[reconcile] Error on failed recurring ${tx.transactionId}:`, err);
       errors++;
@@ -168,11 +171,15 @@ export async function runReconcileDonors(): Promise<{
 
   for (const tx of failedOneTime) {
     try {
-      const nationalId = tx.email.endsWith('@noemail.hyp')
-        ? tx.email.replace('@noemail.hyp', '')
-        : null;
+      const isSynthetic = tx.email.endsWith('@noemail.hyp');
+      let resolvedEmail: string | null;
 
-      const resolvedEmail = await resolveEmail(tx.transactionId, tx.agreementId ?? null, nationalId);
+      if (!isSynthetic) {
+        resolvedEmail = tx.email;
+      } else {
+        const nationalId = tx.email.replace('@noemail.hyp', '');
+        resolvedEmail = await resolveEmail(tx.transactionId, tx.agreementId ?? null, nationalId);
+      }
 
       if (!resolvedEmail) {
         console.log(`[reconcile] Skipping failed one-time ${tx.transactionId} - no real email found yet`);
@@ -202,6 +209,7 @@ export async function runReconcileDonors(): Promise<{
 
       console.log(`[reconcile] Logged failed one-time in Monday: ${resolvedEmail} (tx: ${tx.transactionId})`);
       processed++;
+      await delay(API_DELAY);
     } catch (err) {
       console.error(`[reconcile] Error on failed one-time ${tx.transactionId}:`, err);
       errors++;
