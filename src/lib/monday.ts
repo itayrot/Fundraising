@@ -78,7 +78,7 @@ export async function createDonorItem(donor: CreateDonorInput): Promise<string> 
     // Platform - plain text column
     [cols.platform()]: capitalise(donor.platform),
     // Status - status column (uses label)
-    [cols.status()]: { label: 'Active' },
+    [cols.status()]: { label: donor.mondayBoardStatus ?? 'Active' },
   });
 
   const mutation = `

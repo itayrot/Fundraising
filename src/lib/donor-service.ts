@@ -46,13 +46,27 @@ export async function upsertDonor(tx: NormalizedTransaction): Promise<void> {
   if (!existing) {
     await createNewDonor(tx, txDate);
   } else {
-    await updateExistingDonor(existing.id, Number(existing.mondayItemId), tx, txDate);
+    try {
+      await updateExistingDonor(existing.id, Number(existing.mondayItemId), tx, txDate);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('inactive') || msg.includes('inactiveItems')) {
+        console.log(
+          `[donor-service] Monday item ${existing.mondayItemId} is deleted/archived, recreating for ${tx.email}`,
+        );
+        const newId = await recreateDonor(existing.id, tx, txDate);
+        await updateExistingDonor(existing.id, newId, tx, txDate);
+      } else {
+        throw err;
+      }
+    }
   }
 }
 
 async function createNewDonor(
   tx: NormalizedTransaction,
   today: string,
+  mondayBoardStatus: 'Active' | 'Pending' = 'Active',
 ): Promise<void> {
   const mondayItemId = await createDonorItem({
     email: tx.email,
@@ -64,6 +78,7 @@ async function createNewDonor(
     lastDonationDate: today,
     isRecurring: tx.isRecurring,
     agreementId: tx.agreementId,
+    mondayBoardStatus,
   });
 
   await db.insert(donorMap).values({
@@ -77,7 +92,7 @@ async function createNewDonor(
     platform: tx.platform,
     isRecurring: tx.isRecurring,
     agreementId: tx.agreementId,
-    status: 'active',
+    status: mondayBoardStatus === 'Pending' ? 'pending' : 'active',
   });
 
   // Log first donation as a subitem in the donor's history
@@ -85,10 +100,38 @@ async function createNewDonor(
     date: today,
     amount: tx.amount,
     currency: tx.currency,
-    status: 'Succeeded',
+    status: mondayBoardStatus === 'Pending' ? 'Failed' : 'Succeeded',
   });
 
   console.log(`[donor-service] Created new donor: ${tx.email} (Monday item ${mondayItemId}, recurring=${tx.isRecurring})`);
+}
+
+async function recreateDonor(existingDonorId: number, tx: NormalizedTransaction, today: string): Promise<number> {
+  const mondayItemId = await createDonorItem({
+    email: tx.email,
+    name: tx.name,
+    amount: tx.amount,
+    currency: tx.currency,
+    platform: tx.platform,
+    firstDonationDate: today,
+    lastDonationDate: today,
+    isRecurring: tx.isRecurring,
+    agreementId: tx.agreementId,
+  });
+
+  await db
+    .update(donorMap)
+    .set({
+      mondayItemId: Number(mondayItemId),
+      lastDonationDate: today,
+      amount: tx.amount,
+      status: 'active',
+      updatedAt: new Date(),
+    })
+    .where(eq(donorMap.id, existingDonorId));
+
+  console.log(`[donor-service] Recreated donor: ${tx.email} (new Monday item ${mondayItemId})`);
+  return Number(mondayItemId);
 }
 
 async function updateExistingDonor(
@@ -148,7 +191,16 @@ export async function markDonorPendingByEmail(
     return;
   }
 
-  await updateDonorItem(String(donor.mondayItemId), { status: 'Pending' });
+  try {
+    await updateDonorItem(String(donor.mondayItemId), { status: 'Pending' });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('inactive') || msg.includes('inactiveItems')) {
+      console.log(`[donor-service] Monday item ${donor.mondayItemId} deleted, skipping Pending update for ${email}`);
+      return;
+    }
+    throw err;
+  }
 
   await db
     .update(donorMap)
@@ -166,4 +218,29 @@ export async function markDonorPendingByEmail(
   }
 
   console.log(`[donor-service] Marked donor Pending: ${email}`);
+}
+
+/**
+ * Ensures a donor is marked Pending for a failed recurring charge.
+ * If no donor row exists (e.g. email only resolved after system went live), creates a Pending donor in Monday.
+ */
+export async function ensureDonorPending(email: string, tx: NormalizedTransaction): Promise<void> {
+  const [donor] = await db
+    .select()
+    .from(donorMap)
+    .where(eq(donorMap.email, email))
+    .limit(1);
+
+  if (donor) {
+    await markDonorPendingByEmail(email, {
+      date: dateString(tx.transactionDate),
+      amount: tx.amount,
+      currency: tx.currency,
+    });
+    return;
+  }
+
+  const today = dateString(tx.transactionDate);
+  await createNewDonor({ ...tx, email }, today, 'Pending');
+  console.log(`[donor-service] Created new donor with Pending status: ${email}`);
 }

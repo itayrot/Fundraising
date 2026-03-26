@@ -23,11 +23,14 @@ export interface CreateDonorInput {
   amount: string;
   currency: Currency;
   platform: Platform;
+  /** Payment outcome (used for one-time board labels, item names, etc.) */
   status?: TransactionStatus;
   firstDonationDate: string;
   lastDonationDate: string;
   isRecurring: boolean;
   agreementId: string | null;
+  /** Master recurring board status column */
+  mondayBoardStatus?: 'Active' | 'Pending';
 }
 
 export interface UpdateDonorInput {

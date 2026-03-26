@@ -1,8 +1,8 @@
 import 'dotenv/config';
-import { eq, and, isNull, isNotNull } from 'drizzle-orm';
+import { eq, and, isNull, isNotNull, not, like } from 'drizzle-orm';
 import { db } from '../lib/db';
 import { transactions, webhookLog, donorMap, syncState, customerRegistry } from '../db/schema';
-import { upsertDonor, markDonorPendingByEmail } from '../lib/donor-service';
+import { upsertDonor, ensureDonorPending } from '../lib/donor-service';
 import { checkWebhookHealth } from '../lib/alert';
 import type { NormalizedTransaction, Currency, Platform } from '../types';
 
@@ -122,19 +122,28 @@ export async function runReconcileDonors(): Promise<{
         continue;
       }
 
-      const txDate = tx.transactionDate.toISOString().split('T')[0];
-      await markDonorPendingByEmail(resolvedEmail, {
-        date: txDate,
+      const normalized: NormalizedTransaction = {
+        transactionId: tx.transactionId,
+        email: resolvedEmail,
+        name: tx.name ?? '',
         amount: tx.amount,
-        currency: tx.currency,
-      });
+        currency: tx.currency as Currency,
+        platform: tx.platform as Platform,
+        status: 'failed',
+        isRecurring: true,
+        agreementId: tx.agreementId ?? null,
+        transactionDate: tx.transactionDate,
+        rawPayload: tx.rawPayload,
+      };
+
+      await ensureDonorPending(resolvedEmail, normalized);
 
       await db
         .update(transactions)
         .set({ mondayTxItemId: 0, email: resolvedEmail })
         .where(eq(transactions.id, tx.id));
 
-      console.log(`[reconcile] Marked Pending: ${resolvedEmail} (tx: ${tx.transactionId})`);
+      console.log(`[reconcile] Marked/Created Pending: ${resolvedEmail} (tx: ${tx.transactionId})`);
       processed++;
     } catch (err) {
       console.error(`[reconcile] Error on failed recurring ${tx.transactionId}:`, err);
@@ -231,12 +240,14 @@ export async function runReconcileDonors(): Promise<{
 }
 
 /**
- * Resolves the real donor email from webhook_log.
+ * Resolves the real donor email from webhook_log and fallbacks.
  *
  * Priority:
  *  1. Exact match by transaction_id (payment-page donation captured in real time)
  *  2. Match by agreement_id (first payment of a recurring agreement)
  *  3. Match by user_id / national_id (recurring monthly charge - nationalId in CSV = UserId in webhook)
+ *  4. customer_registry (manually imported CRM / spreadsheet)
+ *  5. Older transactions with same agreement_id (pre go-live donors)
  */
 async function resolveEmail(
   transactionId: string,
@@ -303,6 +314,22 @@ async function resolveEmail(
       console.log(`[reconcile] Resolved email from customer_registry for nationalId ${nationalId}`);
       return fromRegistry.email;
     }
+  }
+
+  // 5. Match by agreement_id in older transactions (donors who joined before webhooks were logged)
+  if (agreementId) {
+    const [byOlderTx] = await db
+      .select({ email: transactions.email })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.agreementId, agreementId),
+          not(like(transactions.email, '%@noemail.hyp')),
+        ),
+      )
+      .limit(1);
+
+    if (byOlderTx?.email) return byOlderTx.email;
   }
 
   return null;
