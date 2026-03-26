@@ -12,28 +12,50 @@ const cols = {
   status: () => process.env.MONDAY_COL_STATUS!,         // status7
 };
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 async function mondayRequest(query: string, variables?: Record<string, unknown>): Promise<unknown> {
-  const response = await fetch(MONDAY_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: process.env.MONDAY_API_KEY!,
-      'API-Version': '2024-01',
-    },
-    body: JSON.stringify({ query, variables }),
-  });
+  const MAX_RETRIES = 5;
 
-  if (!response.ok) {
-    throw new Error(`Monday API HTTP error: ${response.status}`);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const response = await fetch(MONDAY_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: process.env.MONDAY_API_KEY!,
+        'API-Version': '2024-01',
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+
+    if (response.status === 429) {
+      const waitSec = Math.min(5 * 2 ** attempt, 60);
+      console.log(`[monday] Rate limited (429), waiting ${waitSec}s before retry ${attempt + 1}/${MAX_RETRIES}`);
+      await sleep(waitSec * 1000);
+      continue;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Monday API HTTP error: ${response.status}`);
+    }
+
+    const data = (await response.json()) as { data: unknown; errors?: unknown[]; error_code?: string };
+
+    if (data.error_code === 'ComplexityException') {
+      const waitSec = Math.min(10 * 2 ** attempt, 60);
+      console.log(`[monday] Complexity limit, waiting ${waitSec}s before retry ${attempt + 1}/${MAX_RETRIES}`);
+      await sleep(waitSec * 1000);
+      continue;
+    }
+
+    if (data.errors && data.errors.length > 0) {
+      throw new Error(`Monday API error: ${JSON.stringify(data.errors)}`);
+    }
+
+    return data.data;
   }
 
-  const data = (await response.json()) as { data: unknown; errors?: unknown[] };
-
-  if (data.errors && data.errors.length > 0) {
-    throw new Error(`Monday API error: ${JSON.stringify(data.errors)}`);
-  }
-
-  return data.data;
+  throw new Error('Monday API: max retries exceeded due to rate limiting');
 }
 
 export async function findDonorByEmail(email: string): Promise<string | null> {
@@ -173,15 +195,23 @@ export async function findOneTimeDonorByEmail(email: string): Promise<string | n
  * Creates a parent donor item in the One-Time board.
  * The item represents the donor (not a single donation).
  * Actual donations are stored as subitems.
+ * Also fills Date/Amount/Currency from the first donation for display.
  */
 export async function createOneTimeDonorParentItem(donor: {
   email: string;
   name?: string | null;
+  date?: string;
+  amount?: string | number;
+  currency?: string;
 }): Promise<string> {
   const emailColId = oneTimeCols.email();
-  const columnValues = JSON.stringify({
+  const colVals: Record<string, unknown> = {
     [emailColId]: { text: donor.email, email: donor.email },
-  });
+  };
+  if (donor.date) colVals[oneTimeCols.date] = dateColVal(donor.date);
+  if (donor.amount != null) colVals[oneTimeCols.amount] = Number(donor.amount);
+  if (donor.currency) colVals['text_mm1tk2x8'] = donor.currency;
+  const columnValues = JSON.stringify(colVals);
 
   const mutation = `
     mutation ($boardId: ID!, $name: String!, $columnValues: JSON!) {
@@ -200,10 +230,14 @@ export async function createOneTimeDonorParentItem(donor: {
   return data.create_item.id;
 }
 
+const subitemCols = {
+  monthly: { date: 'date0', amount: 'numeric_mm1r4h80', currency: 'text_mm1rvmyd', status: 'text_mm1rzyms' },
+  oneTime: { date: 'date0', amount: 'numeric_mm1rzvm9', currency: 'text_mm1rvdwf', status: 'text_mm1r5s4v' },
+};
+
 /**
- * Creates a donation subitem under a parent donor item (any board).
- * The subitem name encodes: date | amount currency | status
- * e.g. "2025-01-15 | 100 ILS | Succeeded"
+ * Creates a donation subitem under a parent donor item.
+ * Detects the board type by checking the parent item's board.
  */
 export async function createDonationSubitem(
   parentItemId: string,
@@ -211,9 +245,19 @@ export async function createDonationSubitem(
 ): Promise<string> {
   const name = `${donation.date} | ${donation.amount} ${donation.currency} | ${donation.status}`;
 
+  const boardType = await detectSubitemBoard(parentItemId);
+  const sc = subitemCols[boardType];
+
+  const columnValues = JSON.stringify({
+    [sc.date]: { date: donation.date },
+    [sc.amount]: Number(donation.amount),
+    [sc.currency]: donation.currency,
+    [sc.status]: donation.status,
+  });
+
   const mutation = `
-    mutation ($parentItemId: ID!, $name: String!) {
-      create_subitem(parent_item_id: $parentItemId, item_name: $name) {
+    mutation ($parentItemId: ID!, $name: String!, $columnValues: JSON!) {
+      create_subitem(parent_item_id: $parentItemId, item_name: $name, column_values: $columnValues) {
         id
       }
     }
@@ -222,9 +266,41 @@ export async function createDonationSubitem(
   const data = (await mondayRequest(mutation, {
     parentItemId,
     name,
+    columnValues,
   })) as { create_subitem: { id: string } };
 
   return data.create_subitem.id;
+}
+
+async function detectSubitemBoard(parentItemId: string): Promise<'monthly' | 'oneTime'> {
+  const query = `query { items(ids: [${parentItemId}]) { board { id } } }`;
+  const data = (await mondayRequest(query)) as { items: { board: { id: string } }[] };
+  const boardId = data.items?.[0]?.board?.id;
+  return boardId === process.env.MONDAY_BOARD_ONE_TIME ? 'oneTime' : 'monthly';
+}
+
+export async function updateOneTimeParentItem(
+  itemId: string,
+  updates: { date?: string; amount?: string | number; currency?: string },
+): Promise<void> {
+  const columnValues: Record<string, unknown> = {};
+  if (updates.date) columnValues[oneTimeCols.date] = dateColVal(updates.date);
+  if (updates.amount != null) columnValues[oneTimeCols.amount] = Number(updates.amount);
+  if (updates.currency) columnValues['text_mm1tk2x8'] = updates.currency;
+
+  if (Object.keys(columnValues).length === 0) return;
+
+  const mutation = `
+    mutation ($boardId: ID!, $itemId: ID!, $columnValues: JSON!) {
+      change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $columnValues) { id }
+    }
+  `;
+
+  await mondayRequest(mutation, {
+    boardId: process.env.MONDAY_BOARD_ONE_TIME,
+    itemId,
+    columnValues: JSON.stringify(columnValues),
+  });
 }
 
 export async function updateDonorItem(itemId: string, updates: UpdateDonorInput): Promise<void> {
