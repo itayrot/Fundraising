@@ -81,9 +81,9 @@ export async function findDonorByEmail(email: string): Promise<string | null> {
   return items.length > 0 ? items[0].id : null;
 }
 
-/** Monday date column format - include time for compatibility */
+/** Monday date column format */
 function dateColVal(dateStr: string): object {
-  return { date: dateStr, time: '00:00:00' };
+  return { date: dateStr };
 }
 
 export async function createDonorItem(donor: CreateDonorInput): Promise<string> {
