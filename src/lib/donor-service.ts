@@ -12,7 +12,8 @@ import {
 import type { NormalizedTransaction } from '../types';
 
 function dateString(d: Date): string {
-  return d.toISOString().split('T')[0]; // YYYY-MM-DD
+  // Use Israel timezone so dates match Hyp's local transaction date
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }); // YYYY-MM-DD
 }
 
 export async function upsertDonor(tx: NormalizedTransaction): Promise<number> {
@@ -205,28 +206,29 @@ export async function markDonorPendingByEmail(
     return;
   }
 
-  if (donor.status === 'pending') {
-    console.log(`[donor-service] Donor ${email} already Pending`);
-    return;
-  }
-
-  try {
-    await updateDonorItem(String(donor.mondayItemId), { status: 'Pending' });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : '';
-    if (msg.includes('inactive') || msg.includes('inactiveItems')) {
-      console.log(`[donor-service] Monday item ${donor.mondayItemId} deleted, skipping Pending update for ${email}`);
-      return;
+  if (donor.status !== 'pending') {
+    try {
+      await updateDonorItem(String(donor.mondayItemId), { status: 'Pending' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('inactive') || msg.includes('inactiveItems')) {
+        console.log(`[donor-service] Monday item ${donor.mondayItemId} deleted, skipping Pending update for ${email}`);
+        return;
+      }
+      throw err;
     }
-    throw err;
+
+    await db
+      .update(donorMap)
+      .set({ status: 'pending', updatedAt: new Date() })
+      .where(eq(donorMap.id, donor.id));
+
+    console.log(`[donor-service] Marked donor Pending: ${email}`);
+  } else {
+    console.log(`[donor-service] Donor ${email} already Pending - logging failed charge only`);
   }
 
-  await db
-    .update(donorMap)
-    .set({ status: 'pending', updatedAt: new Date() })
-    .where(eq(donorMap.id, donor.id));
-
-  // Log the failed charge as a subitem in the donor's history
+  // Always log the failed charge as a subitem
   if (failedDonation) {
     await createDonationSubitem(String(donor.mondayItemId), {
       date: failedDonation.date,
@@ -235,8 +237,6 @@ export async function markDonorPendingByEmail(
       status: 'Failed',
     });
   }
-
-  console.log(`[donor-service] Marked donor Pending: ${email}`);
 }
 
 /**
