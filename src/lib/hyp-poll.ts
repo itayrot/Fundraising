@@ -43,7 +43,8 @@ function coinToCurrency(coin: string): Currency {
 }
 
 function isRecurring(info: string): boolean {
-  return info.trim().startsWith('הוראת קבע');
+  const t = info.trim().toLowerCase();
+  return t.startsWith('הוראת קבע') || t.includes('monthly') || t.includes('standing order');
 }
 
 function extractAgreementId(info: string): string | null {
