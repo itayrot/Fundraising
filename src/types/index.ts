@@ -31,10 +31,14 @@ export interface CreateDonorInput {
   agreementId: string | null;
   /** Master recurring board status column */
   mondayBoardStatus?: 'Active' | 'Pending';
+  /** Sum of all succeeded transactions for this donor */
+  totalDonated?: number;
 }
 
 export interface UpdateDonorInput {
   lastDonationDate?: string;
   amount?: string;
   status?: 'Active' | 'Pending' | 'Inactive';
+  /** Sum of all succeeded transactions for this donor */
+  totalDonated?: number;
 }

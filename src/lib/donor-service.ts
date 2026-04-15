@@ -1,4 +1,4 @@
-import { eq, min, max, and } from 'drizzle-orm';
+import { eq, min, max, and, sum } from 'drizzle-orm';
 import { db } from './db';
 import { donorMap, transactions } from '../db/schema';
 import {
@@ -16,18 +16,20 @@ function dateString(d: Date): string {
   return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }); // YYYY-MM-DD
 }
 
-/** Get first and last succeeded transaction dates for a donor from DB */
-async function getDonorDateRange(email: string): Promise<{ first: string | null; last: string | null }> {
+/** Get first/last succeeded dates and total donated amount for a donor from DB */
+async function getDonorStats(email: string): Promise<{ first: string | null; last: string | null; totalDonated: number }> {
   const [result] = await db
     .select({
       first: min(transactions.transactionDate),
       last: max(transactions.transactionDate),
+      total: sum(transactions.amount),
     })
     .from(transactions)
     .where(and(eq(transactions.email, email), eq(transactions.status, 'succeeded')));
   return {
     first: result?.first ? dateString(result.first) : null,
     last: result?.last ? dateString(result.last) : null,
+    totalDonated: result?.total ? Number(result.total) : 0,
   };
 }
 
@@ -102,10 +104,10 @@ async function createNewDonor(
   today: string,
   mondayBoardStatus: 'Active' | 'Pending' = 'Active',
 ): Promise<number> {
-  // Use the actual first/last donation dates from DB (may differ from today for historical donors)
-  const dateRange = await getDonorDateRange(tx.email);
-  const firstDate = dateRange.first ?? today;
-  const lastDate = dateRange.last ?? today;
+  // Use the actual first/last donation dates and total from DB
+  const stats = await getDonorStats(tx.email);
+  const firstDate = stats.first ?? today;
+  const lastDate = stats.last ?? today;
 
   const mondayItemId = await createDonorItem({
     email: tx.email,
@@ -118,6 +120,7 @@ async function createNewDonor(
     isRecurring: tx.isRecurring,
     agreementId: tx.agreementId,
     mondayBoardStatus,
+    totalDonated: stats.totalDonated,
   });
 
   await db.insert(donorMap).values({
@@ -180,10 +183,13 @@ async function updateExistingDonor(
   tx: NormalizedTransaction,
   today: string,
 ): Promise<void> {
+  const stats = await getDonorStats(tx.email);
+
   await updateDonorItem(String(mondayItemId), {
     lastDonationDate: today,
     amount: tx.amount,
     status: 'Active',
+    totalDonated: stats.totalDonated,
   });
 
   await db

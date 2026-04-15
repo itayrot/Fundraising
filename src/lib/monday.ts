@@ -3,13 +3,14 @@ import type { CreateDonorInput, UpdateDonorInput } from '../types';
 const MONDAY_API_URL = 'https://api.monday.com/v2';
 
 const cols = {
-  email: () => process.env.MONDAY_COL_EMAIL!,           // text_mkza29j2
-  firstDate: () => process.env.MONDAY_COL_FIRST_DATE!,  // date4
-  lastDate: () => process.env.MONDAY_COL_LAST_DATE!,    // date_mm1afpjt
-  amount: () => process.env.MONDAY_COL_AMOUNT!,         // numbers
-  currency: () => process.env.MONDAY_COL_CURRENCY!,     // color_mkzak51x (status type)
-  platform: () => process.env.MONDAY_COL_PLATFORM!,     // text_mkzacamp
-  status: () => process.env.MONDAY_COL_STATUS!,         // status7
+  email: () => process.env.MONDAY_COL_EMAIL!,              // text_mkza29j2
+  firstDate: () => process.env.MONDAY_COL_FIRST_DATE!,     // date4
+  lastDate: () => process.env.MONDAY_COL_LAST_DATE!,       // date_mm1afpjt
+  amount: () => process.env.MONDAY_COL_AMOUNT!,            // numbers
+  currency: () => process.env.MONDAY_COL_CURRENCY!,        // color_mkzak51x (status type)
+  platform: () => process.env.MONDAY_COL_PLATFORM!,        // text_mkzacamp
+  status: () => process.env.MONDAY_COL_STATUS!,            // status7
+  totalDonated: () => process.env.MONDAY_COL_TOTAL_DONATED!, // numeric_mm2e9sfz
 };
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -93,8 +94,10 @@ export async function createDonorItem(donor: CreateDonorInput): Promise<string> 
     // Dates - both first and last (date4 = Date, date_mm1afpjt = Last Donation Date)
     [cols.firstDate()]: dateColVal(donor.firstDonationDate),
     [cols.lastDate()]: dateColVal(donor.lastDonationDate),
-    // Amount
+    // Amount (monthly recurring amount)
     [cols.amount()]: donor.amount,
+    // Total donated (sum of all succeeded transactions)
+    ...(donor.totalDonated != null ? { [cols.totalDonated()]: donor.totalDonated } : {}),
     // Currency - status column (uses label)
     [cols.currency()]: { label: donor.currency },
     // Platform - plain text column
@@ -314,6 +317,9 @@ export async function updateDonorItem(itemId: string, updates: UpdateDonorInput)
   }
   if (updates.amount) {
     columnValues[cols.amount()] = updates.amount;
+  }
+  if (updates.totalDonated != null) {
+    columnValues[cols.totalDonated()] = updates.totalDonated;
   }
 
   if (Object.keys(columnValues).length === 0) return;
