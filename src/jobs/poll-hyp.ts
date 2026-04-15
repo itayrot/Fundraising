@@ -77,7 +77,9 @@ export async function runPollHyp(): Promise<{ fetched: number; saved: number; sk
       }
 
       // 3. Match by national ID / UserId (CSV nationalId = webhook UserId)
-      if (!resolvedEmail && row.nationalId) {
+      // Skip generic placeholder IDs (e.g. 000000000 used for all foreign donors without Israeli ID)
+      const hasValidNationalId = row.nationalId && !/^0+$/.test(row.nationalId);
+      if (!resolvedEmail && hasValidNationalId) {
         const [byUserId] = await db
           .select({ email: webhookLog.email })
           .from(webhookLog)
@@ -88,7 +90,7 @@ export async function runPollHyp(): Promise<{ fetched: number; saved: number; sk
       }
 
       // 4. Fallback: customer_registry (manually imported CRM / spreadsheet)
-      if (!resolvedEmail && row.nationalId) {
+      if (!resolvedEmail && hasValidNationalId) {
         const [fromRegistry] = await db
           .select({ email: customerRegistry.email })
           .from(customerRegistry)
@@ -104,7 +106,7 @@ export async function runPollHyp(): Promise<{ fetched: number; saved: number; sk
         tx.email = resolvedEmail;
         console.log(`[poll-hyp] Resolved email for ${tx.transactionId}: ${tx.email}`);
       } else {
-        tx.email = `${row.nationalId || tx.transactionId}@noemail.hyp`;
+        tx.email = `${hasValidNationalId ? row.nationalId : tx.transactionId}@noemail.hyp`;
         console.log(`[poll-hyp] No real email for ${tx.transactionId}, saving with synthetic: ${tx.email}`);
       }
 
