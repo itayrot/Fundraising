@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm';
+import { eq, min, max, and } from 'drizzle-orm';
 import { db } from './db';
-import { donorMap } from '../db/schema';
+import { donorMap, transactions } from '../db/schema';
 import {
   createDonorItem,
   updateDonorItem,
@@ -14,6 +14,21 @@ import type { NormalizedTransaction } from '../types';
 function dateString(d: Date): string {
   // Use Israel timezone so dates match Hyp's local transaction date
   return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }); // YYYY-MM-DD
+}
+
+/** Get first and last succeeded transaction dates for a donor from DB */
+async function getDonorDateRange(email: string): Promise<{ first: string | null; last: string | null }> {
+  const [result] = await db
+    .select({
+      first: min(transactions.transactionDate),
+      last: max(transactions.transactionDate),
+    })
+    .from(transactions)
+    .where(and(eq(transactions.email, email), eq(transactions.status, 'succeeded')));
+  return {
+    first: result?.first ? dateString(result.first) : null,
+    last: result?.last ? dateString(result.last) : null,
+  };
 }
 
 export async function upsertDonor(tx: NormalizedTransaction): Promise<number> {
@@ -87,14 +102,19 @@ async function createNewDonor(
   today: string,
   mondayBoardStatus: 'Active' | 'Pending' = 'Active',
 ): Promise<number> {
+  // Use the actual first/last donation dates from DB (may differ from today for historical donors)
+  const dateRange = await getDonorDateRange(tx.email);
+  const firstDate = dateRange.first ?? today;
+  const lastDate = dateRange.last ?? today;
+
   const mondayItemId = await createDonorItem({
     email: tx.email,
     name: tx.name,
     amount: tx.amount,
     currency: tx.currency,
     platform: tx.platform,
-    firstDonationDate: today,
-    lastDonationDate: today,
+    firstDonationDate: firstDate,
+    lastDonationDate: lastDate,
     isRecurring: tx.isRecurring,
     agreementId: tx.agreementId,
     mondayBoardStatus,
@@ -104,8 +124,8 @@ async function createNewDonor(
     email: tx.email,
     name: tx.name || null,
     mondayItemId: Number(mondayItemId),
-    firstDonationDate: today,
-    lastDonationDate: today,
+    firstDonationDate: firstDate,
+    lastDonationDate: lastDate,
     amount: tx.amount,
     currency: tx.currency,
     platform: tx.platform,
