@@ -16,8 +16,13 @@ function dateString(d: Date): string {
   return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }); // YYYY-MM-DD
 }
 
-/** Get first/last succeeded dates and total donated amount for a donor from DB */
-async function getDonorStats(email: string): Promise<{ first: string | null; last: string | null; totalDonated: number }> {
+/** Get first/last succeeded dates and total donated amount for a donor from DB.
+ *  When isRecurring is specified, only counts transactions of that type. */
+async function getDonorStats(email: string, isRecurring?: boolean): Promise<{ first: string | null; last: string | null; totalDonated: number }> {
+  const conditions = [eq(transactions.email, email), eq(transactions.status, 'succeeded')];
+  if (isRecurring !== undefined) {
+    conditions.push(eq(transactions.isRecurring, isRecurring));
+  }
   const [result] = await db
     .select({
       first: min(transactions.transactionDate),
@@ -25,7 +30,7 @@ async function getDonorStats(email: string): Promise<{ first: string | null; las
       total: sum(transactions.amount),
     })
     .from(transactions)
-    .where(and(eq(transactions.email, email), eq(transactions.status, 'succeeded')));
+    .where(and(...conditions));
   return {
     first: result?.first ? dateString(result.first) : null,
     last: result?.last ? dateString(result.last) : null,
@@ -104,8 +109,8 @@ async function createNewDonor(
   today: string,
   mondayBoardStatus: 'Active' | 'Pending' = 'Active',
 ): Promise<number> {
-  // Use the actual first/last donation dates and total from DB
-  const stats = await getDonorStats(tx.email);
+  // Use the actual first/last donation dates and total from DB (scoped to same type)
+  const stats = await getDonorStats(tx.email, tx.isRecurring);
   const firstDate = stats.first ?? today;
   const lastDate = stats.last ?? today;
 
@@ -183,7 +188,7 @@ async function updateExistingDonor(
   tx: NormalizedTransaction,
   today: string,
 ): Promise<void> {
-  const stats = await getDonorStats(tx.email);
+  const stats = await getDonorStats(tx.email, tx.isRecurring);
 
   await updateDonorItem(String(mondayItemId), {
     lastDonationDate: today,
